@@ -679,7 +679,7 @@ public:
 
 		float cone_angle_constant = 1.f/256.f;
 
-		bool visualize_cameras = false;
+		bool visualize_cameras = true;
 		bool render_with_camera_distortion = false;
 		CameraDistortion render_distortion = {};
 
@@ -842,7 +842,7 @@ public:
 	float m_picture_in_picture_res = 0.f; // if non zero, requests a small second picture :)
 
 	bool m_imgui_enabled = true; // tab to toggle
-	bool m_visualize_unit_cube = false;
+	bool m_visualize_unit_cube = true;
 	bool m_snap_to_pixel_centers = false;
 
 	Eigen::Vector2f m_parallax_shift = {0.f, 0.f}; // to shift the viewer's head position by some amount parallel to the screen
