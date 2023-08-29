@@ -110,8 +110,9 @@ void Testbed::load_training_data(const std::string& data_path) {
 		throw std::runtime_error{std::string{"Data path '"} + m_data_path.str() + "' does not exist."};
 	}
 
+	// Call load_nerf() defined in `testbed_nerf.cu` Line 2950
 	switch (m_testbed_mode) {
-		case ETestbedMode::Nerf:  load_nerf(); break;
+		case ETestbedMode::Nerf:  load_nerf(); break; 
 		case ETestbedMode::Sdf:   load_mesh(); break;
 		case ETestbedMode::Image: load_image(); break;
 		case ETestbedMode::Volume:load_volume(); break;
@@ -1747,7 +1748,7 @@ bool Testbed::frame() {
 
 	train_and_render(skip_rendering);
 	if (m_testbed_mode == ETestbedMode::Sdf && m_sdf.calculate_iou_online) {
-		m_sdf.iou = calculate_iou(m_train ? 64*64*64 : 128*128*128, m_sdf.iou_decay, false, true);
+		m_sdf.iou = calculate_iou(m_train ? 64*64*64 : 128*128*128, m_sdf.iou_decay, false, true); //  intersection over union
 		m_sdf.iou_decay = 0.f;
 	}
 

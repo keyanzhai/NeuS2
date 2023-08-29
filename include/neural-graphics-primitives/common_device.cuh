@@ -644,12 +644,12 @@ inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen:
 				return Eigen::Array4f::Constant(-1.0f);
 			}
 
-			float alpha = (float)val[3] * (1.0f/255.0f);
+			float alpha = (float)val[3] * (1.0f/255.0f); // [0 - 255] -> [0, 1]
 			return Eigen::Array4f{
-				srgb_to_linear((float)val[0] * (1.0f/255.0f)) * alpha,
-				srgb_to_linear((float)val[1] * (1.0f/255.0f)) * alpha,
-				srgb_to_linear((float)val[2] * (1.0f/255.0f)) * alpha,
-				alpha,
+				srgb_to_linear((float)val[0] * (1.0f/255.0f)) * alpha, // R: [0 - 255] -> [0, 1] * alpha
+				srgb_to_linear((float)val[1] * (1.0f/255.0f)) * alpha, // G: [0 - 255] -> [0, 1] * alpha
+				srgb_to_linear((float)val[2] * (1.0f/255.0f)) * alpha, // B: [0 - 255] -> [0, 1] * alpha
+				alpha, // [0, 1]
 			};
 		}
 		case EImageDataType::Half: {

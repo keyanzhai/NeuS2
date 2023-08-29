@@ -1643,11 +1643,11 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	}
 
 	Array3f exposure_scale = (0.6931471805599453f * exposure[img]).exp();
-	Array4f texsamp = read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type);
+	Array4f texsamp = read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type); // RGBA
 
 	Array3f rgbtarget;
 	if (train_in_linear_colors || color_space == EColorSpace::Linear) {
-		rgbtarget = exposure_scale * texsamp.head<3>() + (1.0f - texsamp.w()) * background_color;
+		rgbtarget = exposure_scale * texsamp.head<3>() + (1.0f - texsamp.w()) * background_color; // get rgb target
 		if (!train_in_linear_colors) {
 			rgbtarget = linear_to_srgb(rgbtarget);
 			background_color = linear_to_srgb(background_color);
@@ -2978,15 +2978,18 @@ void Testbed::load_nerf() {
 		}
 
 		all_training_time_frame = all_json_paths.size();
-		printf("total frame: %d\n",all_training_time_frame);
+		printf("total frame (number of json paths): %d\n",all_training_time_frame);
 
 		std::vector<fs::path> tmp_json_paths;
 		tmp_json_paths.emplace_back(all_json_paths[0]);
 		printf("tmp_json_paths size: %d\n", (int)tmp_json_paths.size());
 
-		m_nerf.training.dataset = ngp::load_nerf(tmp_json_paths, m_nerf.sharpen);
+		// Get nerf dataset
+		m_nerf.training.dataset = ngp::load_nerf(tmp_json_paths, m_nerf.sharpen); // load_nerf() defined in `nerf_loader.cu` Line 197
 	}
 
+	// After loading the nerf dataset
+	// Settings for m_nerf using information from m_nerf.training.dataset 
 	m_nerf.rgb_activation = m_nerf.training.dataset.is_hdr ? ENerfActivation::Exponential : ENerfActivation::Logistic;
 
 	m_nerf.training.n_images_for_training = (int)m_nerf.training.dataset.n_images;
@@ -3013,7 +3016,7 @@ void Testbed::load_nerf() {
 
 	m_nerf.training.reset_extra_dims(m_rng);
 
-	if (m_nerf.training.dataset.has_rays) {
+	if (m_nerf.training.dataset.has_rays) { // not used
 		m_nerf.training.near_distance = 0.0f;
 		// m_nerf.training.optimize_exposure = true;
 	}

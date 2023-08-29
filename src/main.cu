@@ -139,6 +139,7 @@ int main(int argc, char** argv) {
 				return 1;
 			}
 
+			// infer mode from file extension
 			if (scene_path.is_directory() || equals_case_insensitive(scene_path.extension(), "json")) {
 				mode = ETestbedMode::Nerf;
 			} else if (equals_case_insensitive(scene_path.extension(), "obj") || equals_case_insensitive(scene_path.extension(), "stl")) {
@@ -166,6 +167,7 @@ int main(int argc, char** argv) {
 
 		Testbed testbed{mode};
 
+		// Load training data
 		if (scene_flag) {
 			fs::path scene_path = get(scene_flag);
 			if (!scene_path.exists()) {
@@ -183,6 +185,7 @@ int main(int argc, char** argv) {
 			case ETestbedMode::Volume: mode_str = "volume"; break;
 		}
 
+		// Load network from snapshot or config file based on snapshot_flag
 		if (snapshot_flag) {
 			// Load network from a snapshot if one is provided
 			fs::path snapshot_path = get(snapshot_flag);

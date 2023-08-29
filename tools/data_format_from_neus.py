@@ -125,11 +125,23 @@ def generate(dataset_name, base_par_dir, copy_image=True, is_downsample=False, d
             img_path = join(base_rgb_dir, img_name)
             msk_path = join(base_msk_dir, msk_name)
             # print("copy", img_path, msk_path)
+
+            # cv2.imread() flags: 
+            # 1: color image (BGR)
+            # 0: grayscale
+            # -1: BGRA, include alpha channel
+
+            # Read the original image with color mode (BGR)
             img = cv2.imread(img_path)
-            msk = cv2.imread(msk_path, 0)
-            image = np.concatenate([img,msk[:,:,np.newaxis]],axis=-1)
+            
+            # Read the mask with grayscale mode.
+            msk = cv2.imread(msk_path, 0) 
+
+            # Concatenate original image with mask channel
+            image = np.concatenate([img, msk[:,:,np.newaxis]], axis=-1)
+
             H , W = image.shape[0], image.shape[1]
-            H , W = image.shape[0], image.shape[1]
+
             cv2.imwrite(join(new_image_dir, img_name), image)
         print("Copy images done")
     

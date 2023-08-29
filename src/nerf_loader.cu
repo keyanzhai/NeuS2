@@ -56,27 +56,48 @@ namespace fs = filesystem;
 
 NGP_NAMESPACE_BEGIN
 
-__global__ void convert_rgba32(const uint64_t num_pixels, const uint8_t* __restrict__ pixels, uint8_t* __restrict__ out, bool white_2_transparent = false, bool black_2_transparent = false, uint32_t mask_color = 0) {
+// A CUDA kernel written in C++ code.
+// For each pixel, do conditional checks based on the white_2_transparent, black_2_transparent, and mask_color flags,
+// and modify the pixels accordingly. (However, these are never used in NeuS2.)
+// - white_2_transparent: whether to convert white pixels to transparent 
+// - black_2_transparent: whether to convert black pixels to transparent
+// - mask_color: A color value that should be treated as a mask
+__global__ void convert_rgba32(const uint64_t num_pixels, const uint8_t* __restrict__ pixels, 
+							   uint8_t* __restrict__ out, bool white_2_transparent = false, 
+							   bool black_2_transparent = false, uint32_t mask_color = 0) {
+	// Multiple threads (number of threads = num_pixels)
+	// Each pixel has a thread to do calculation
 	const uint64_t i = threadIdx.x + blockIdx.x * blockDim.x;
 	if (i >= num_pixels) return;
 
-	uint8_t rgba[4];
+	uint8_t rgba[4]; // an array of size 4 bytes (representing RGBA values, 1 byte for 1 channel)
+	// It interprets the input pixel data at index i*4 as a 32-bit integer (uint32_t) and 
+	// stores the four individual color channels (red, green, blue, and alpha) in the rgba array.
 	*((uint32_t*)&rgba[0]) = *((uint32_t*)&pixels[i*4]);
 
 	// NSVF dataset has 'white = transparent' madness
+	// white_2_transparent should be false (not used)
+	// whether to convert white pixels to transparent 
 	if (white_2_transparent && rgba[0] == 255 && rgba[1] == 255 && rgba[2] == 255) {
+		printf("white_2_transparent is true, setting rgba[3] = 0 \n");
 		rgba[3] = 0;
 	}
 
+	// black_2_transparent should be false (not used)
+	// whether to convert black pixels to transparent
 	if (black_2_transparent && rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0) {
+		printf("black_2_transparent is true, setting rgba[3] = 0 \n");
 		rgba[3] = 0;
 	}
 
+	// mask_color should always be 0 (not used)
 	if (mask_color != 0 && mask_color == *((uint32_t*)&rgba[0])) {
+		printf("mask_color != 0");
 		// turn the mask into hot pink
 		rgba[0] = 0xFF; rgba[1] = 0x00; rgba[2] = 0xFF; rgba[3] = 0x00;
 	}
 
+	// stores the modified (actually not used) rgba values back into the out array at index i*4
 	*((uint32_t*)&out[i*4]) = *((uint32_t*)&rgba[0]);
 }
 
@@ -203,23 +224,23 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 
 	NerfDataset result{};
 	std::ifstream f{jsonpaths.front().str()};
-	nlohmann::json transforms = nlohmann::json::parse(f, nullptr, true, true);
+	nlohmann::json transforms = nlohmann::json::parse(f, nullptr, true, true); // parse the json file
 
 	ThreadPool pool;
 
 	struct LoadedImageInfo {
-		Eigen::Vector2i res = Eigen::Vector2i::Zero();
+		Eigen::Vector2i res = Eigen::Vector2i::Zero(); // resolution
 		bool image_data_on_gpu = false;
 		EImageDataType image_type = EImageDataType::None;
 		bool white_transparent = false;
 		bool black_transparent = false;
 		uint32_t mask_color = 0;
-		void *pixels = nullptr;
+		void *pixels = nullptr; // the image data
 		uint16_t *depth_pixels = nullptr;
 		Ray *rays = nullptr;
 		float depth_scale = -1.f;
 	};
-	std::vector<LoadedImageInfo> images;
+	std::vector<LoadedImageInfo> images; // a vector of struct LoadedImageInfo
 	LoadedImageInfo info = {};
 
 	if (transforms["camera"].is_array()) {
@@ -235,6 +256,7 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	// 	return downsample_path;
 	// };
 	// nerf original format
+
 	std::vector<nlohmann::json> jsons;
 	std::transform(
 		jsonpaths.begin(), jsonpaths.end(),
@@ -245,7 +267,6 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	);
 
 	// For dynamic scene: one json for all frame, all images in one frame
-
 	result.n_images = 0;
 	for (size_t i = 0; i < jsons.size(); ++i) {
 		auto& json = jsons[i];
@@ -292,10 +313,11 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			}
 		}
 
+		// Set the number of images provided in the json file
 		result.n_images += frames.size();
 	}
 
-	images.resize(result.n_images);
+	images.resize(result.n_images); // resize the "images" vector to the size equal to the number of images
 	result.xforms.resize(result.n_images);
 	result.metadata.resize(result.n_images);
 	result.pixelmemory.resize(result.n_images);
@@ -305,6 +327,8 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	result.scale = NERF_SCALE;
 	result.offset = {0.5f, 0.5f, 0.5f};
 
+	// A vector of std::futures
+	// The class template std::future provides a mechanism to access the result of asynchronous operations:
 	std::vector<std::future<void>> futures;
 
 	size_t image_idx = 0;
@@ -319,9 +343,9 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	bool fix_premult = false;
 	bool enable_ray_loading = true;
 	bool enable_depth_loading = true;
-	std::atomic<int> n_loaded{0};
-	BoundingBox cam_aabb;
-	for (size_t i = 0; i < jsons.size(); ++i) {
+	std::atomic<int> n_loaded{0}; // Each instantiation and full specialization of the std::atomic template defines an atomic type. If one thread writes to an atomic object while another thread reads from it, the behavior is well-defined (see memory model for details on data races).
+	BoundingBox cam_aabb; // axis-aligned boubding box for the cameras
+	for (size_t i = 0; i < jsons.size(); ++i) { // for all the json files (only 1 for NeuS2 static scenes)
 		auto& json = jsons[i];
 
 		fs::path basepath = jsonpaths[i].parent_path();
@@ -344,7 +368,8 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 		}
 
 		if (json.contains("from_na")) {
-			result.from_na = true;
+			// result.from_na = true;
+			result.from_na = bool(json["from_na"]);
 		}
 
 		if (json.contains("fix_premult")) {
@@ -373,8 +398,9 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			info.black_transparent = bool(json["black_transparent"]);
 		}
 
+		// In NeuS2
 		if (json.contains("scale")) {
-			result.scale = json["scale"];
+			result.scale = json["scale"]; // set the scale to be applied to camera positions
 		}
 
 		if (json.contains("importance_sampling")) {
@@ -457,12 +483,14 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			}
 		}
 
+		// In NeuS2
 		if (json.contains("aabb_scale")) {
 			result.aabb_scale = json["aabb_scale"];
 		}
 
+		// In NeuS2
 		if (json.contains("offset")) {
-			result.offset =
+			result.offset = // set the offset to be applied to camera positions
 				json["offset"].is_array() ?
 				Vector3f{float(json["offset"][0]), float(json["offset"][1]), float(json["offset"][2])} :
 				Vector3f{float(json["offset"]), float(json["offset"]), float(json["offset"])};
@@ -476,13 +504,28 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			result.offset = { ((float(aabb[1][0])+float(aabb[0][0]))*0.5f)*-result.scale + 0.5f , ((float(aabb[1][1])+float(aabb[0][1]))*0.5f)*-result.scale + 0.5f,((float(aabb[1][2])+float(aabb[0][2]))*0.5f)*-result.scale + 0.5f};
 		}
 
-		if (json.contains("frames") && json["frames"].is_array()) {
-			for (int j = 0; j < json["frames"].size(); ++j) {
-				auto& frame = json["frames"][j];
+		// In NeuS2
+		// Set Axis-Aligned Bounding Box for all the cameras
+		if (json.contains("frames") && json["frames"].is_array()) { // json["frames"]: list of {"file_path", "transform_matrix", "intrinsic_matrix"}
+			for (int j = 0; j < json["frames"].size(); ++j) { // loop through each {"file_path", "transform_matrix", "intrinsic_matrix"}
+				auto& frame = json["frames"][j]; // each frame: {"file_path", "transform_matrix", "intrinsic_matrix"}
+
+				// load "transform_matrix" (camera to world transformation)
+				// In NeuS2 static scenes, jsonmatrix_start and jsonmatrix_end are both just "transform_matrix"
 				nlohmann::json& jsonmatrix_start = frame.contains("transform_matrix_start") ? frame["transform_matrix_start"] : frame["transform_matrix"];
 				nlohmann::json& jsonmatrix_end = frame.contains("transform_matrix_end") ? frame["transform_matrix_end"] : jsonmatrix_start;
+
+				// Get camera position in world frame
+				// Apply scaling and shifting
+				//                 Vector3f{float(jsonmatrix_start[0][3]), float(jsonmatrix_start[1][3]), float(jsonmatrix_start[2][3])}: camera origin coordinate in world frame
+				// 		   	  p/q = camera origin * scale + offset
 				const Vector3f p = Vector3f{float(jsonmatrix_start[0][3]), float(jsonmatrix_start[1][3]), float(jsonmatrix_start[2][3])} * result.scale + result.offset;
 				const Vector3f q = Vector3f{float(jsonmatrix_end[0][3]), float(jsonmatrix_end[1][3]), float(jsonmatrix_end[2][3])} * result.scale + result.offset;
+				
+				// Set the min and max of the bounding box to be the smallest/largest coordinates among all the camera positions after scaling and shifting
+				// Initially, min = (inf, inf, inf), max = (-inf, -inf, -inf), so it is guaranteed to be reset by the camera coordinates
+				// After enlarging, the min = (min_x, min_y, min_z) will have the smallest xyz values that all the cameras have
+				// 				        max = (Max_x, Max_y, Max_z) will have the largest xyz values that all the cameras have
 				cam_aabb.enlarge(p);
 				cam_aabb.enlarge(q);
 			}
@@ -510,205 +553,264 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			}
 		}
 
-		// if (json.contains("frames") && json["frames"].is_array()) pool.parallelForAsync<size_t>(0, json["frames"].size(), [&, basepath, image_idx, info](size_t i) {
-		if (json.contains("frames") && json["frames"].is_array()) pool.parallelForAsync<size_t>(0, json["frames"].size(), [&progress, &n_loaded, &result, &images, &json, basepath, image_idx, info, rolling_shutter, principal_point, camera_distortion, part_after_underscore, fix_premult, enable_depth_loading, enable_ray_loading](size_t i) {
-			size_t i_img = i + image_idx;
-			auto& frame = json["frames"][i];
-			LoadedImageInfo& dst = images[i_img];
-			dst = info; // copy defaults
+		// In NeuS2
+		// Load all the images
+		if (json.contains("frames") && json["frames"].is_array()) {
+			
+			// Load all the images with multiple threads
+							  // (start = 0,   end = json["frames"].size() = number of frames provided in json file,                            																																				
+			pool.parallelForAsync<size_t>(0, json["frames"].size(), 
+			// body = the entire lambda function below
+			// Lambda function: Variables that have the ampersand (&) prefix are accessed by reference and variables that don't have it are accessed by value.
+			[&progress, &n_loaded, &result, &images, &json, basepath, image_idx, info, rolling_shutter, principal_point, 
+			camera_distortion, part_after_underscore, fix_premult, enable_depth_loading, enable_ray_loading] (size_t i) 
+			{
+				size_t i_img = i + image_idx;
+				auto& frame = json["frames"][i]; // For neus2: frame only has {"file_path", "transform_matrix", "intrinsic_matrix"}
+				LoadedImageInfo& dst = images[i_img];
+				dst = info; // copy defaults, should be empty if nothing is set
 
-			std::string json_provided_path(frame["file_path"]);
-			if (json_provided_path == "") {
-				char buf[256];
-				snprintf(buf, 256, "%s_%03d/rgba.png", part_after_underscore.c_str(), (int)i);
-				json_provided_path = buf;
-			}
-			fs::path path = basepath / json_provided_path;
-
-			if (path.extension() == "") {
-				path = path.with_extension("png");
-				if (!path.exists()) {
-					path = path.with_extension("exr");
+				// Load the images
+				std::string json_provided_path(frame["file_path"]); // get image path
+				if (json_provided_path == "") {
+					char buf[256];
+					snprintf(buf, 256, "%s_%03d/rgba.png", part_after_underscore.c_str(), (int)i);
+					json_provided_path = buf;
 				}
-				if (!path.exists()) {
-					throw std::runtime_error{ "Could not find image file: " + path.str()};
-				}
-			}
+				fs::path path = basepath / json_provided_path; // full image path
 
-			std::string img_path = path.str();
-			replace(img_path.begin(),img_path.end(),'\\','/');
-
-			int comp = 0;
-			if (equals_case_insensitive(path.extension(), "exr")) {
-				// dst.pixels = load_exr_to_gpu(&dst.res.x(), &dst.res.y(), path.str().c_str(), fix_premult);
-				dst.pixels = load_exr_to_gpu(&dst.res.x(), &dst.res.y(), img_path.c_str(), fix_premult);
-				dst.image_type = EImageDataType::Half;
-				dst.image_data_on_gpu = true;
-				result.is_hdr = true;
-			} else {
-				dst.image_data_on_gpu = false;
-				// uint8_t* img = stbi_load(path.str().c_str(), &dst.res.x(), &dst.res.y(), &comp, 4);
-				uint8_t* img = stbi_load(img_path.c_str(), &dst.res.x(), &dst.res.y(), &comp, 4);
-
-
-				fs::path alphapath = basepath / (std::string{frame["file_path"]} + ".alpha."s + path.extension());
-				if (alphapath.exists()) {
-					int wa=0,ha=0;
-					uint8_t* alpha_img = stbi_load(alphapath.str().c_str(), &wa, &ha, &comp, 4);
-					if (!alpha_img) {
-						throw std::runtime_error{"Could not load alpha image "s + alphapath.str()};
+				if (path.extension() == "") {
+					path = path.with_extension("png");
+					if (!path.exists()) {
+						path = path.with_extension("exr");
 					}
-					ScopeGuard mem_guard{[&]() { stbi_image_free(alpha_img); }};
-					if (wa != dst.res.x() || ha != dst.res.y()) {
-						throw std::runtime_error{std::string{"Alpha image has wrong resolution: "} + alphapath.str()};
-					}
-					tlog::success() << "Alpha loaded from " << alphapath;
-					for (int i=0;i<dst.res.prod();++i) {
-						img[i*4+3] = uint8_t(255.0f*srgb_to_linear(alpha_img[i*4]*(1.f/255.f))); // copy red channel of alpha to alpha.png to our alpha channel
+					if (!path.exists()) {
+						throw std::runtime_error{ "Could not find image file: " + path.str()};
 					}
 				}
 
-				fs::path maskpath = path.parent_path()/(std::string{"dynamic_mask_"} + path.basename() + ".png");
-				if (maskpath.exists()) {
-					int wa=0,ha=0;
-					uint8_t* mask_img = stbi_load(maskpath.str().c_str(), &wa, &ha, &comp, 4);
-					if (!mask_img) {
-						throw std::runtime_error{std::string{"Could not load mask image "} + maskpath.str()};
-					}
-					ScopeGuard mem_guard{[&]() { stbi_image_free(mask_img); }};
-					if (wa != dst.res.x() || ha != dst.res.y()) {
-						throw std::runtime_error{std::string{"Mask image has wrong resolution: "} + maskpath.str()};
-					}
-					dst.mask_color = 0x00FF00FF; // HOT PINK
-					for (int i = 0; i < dst.res.prod(); ++i) {
-						if (mask_img[i*4] != 0) {
-							*(uint32_t*)&img[i*4] = dst.mask_color;
+				std::string img_path = path.str(); // get path string
+				replace(img_path.begin(),img_path.end(),'\\','/'); // handle slash and back slash delimiters
+
+				int comp = 0; // number of color channels
+
+				// ============= Load the image data using stb library =============
+				// If image is .exr format:
+				// (An EXR file is a raster image stored in the OpenEXR format, a high dynamic-range (HDR) image format developed by Academy Software Foundation (ASWF))
+				if (equals_case_insensitive(path.extension(), "exr")) {
+					// dst.pixels = load_exr_to_gpu(&dst.res.x(), &dst.res.y(), path.str().c_str(), fix_premult);
+					dst.pixels = load_exr_to_gpu(&dst.res.x(), &dst.res.y(), img_path.c_str(), fix_premult);
+					dst.image_type = EImageDataType::Half;
+					dst.image_data_on_gpu = true;
+					result.is_hdr = true;
+				} else { // If image is not .exr format
+					dst.image_data_on_gpu = false;
+
+					// Uses the library stb (https://github.com/nothings/stb/tree/master) 
+					// Reference: https://solarianprogrammer.com/2019/06/10/c-programming-reading-writing-images-stb_image-libraries/
+					// stb_image.h: image loading/decoding from file/memory: JPG, PNG, TGA, BMP, PSD, GIF, HDR, PIC
+					// - stbi_load(): read an image from the disk
+					//             stbi_load(filename,         width,        height,  number of color channels,  desired number of color channels = 4)
+					uint8_t* img = stbi_load(img_path.c_str(), &dst.res.x(), &dst.res.y(), &comp, 4);
+
+					// Get alphapath (not used)
+					fs::path alphapath = basepath / (std::string{frame["file_path"]} + ".alpha."s + path.extension());
+					if (alphapath.exists()) {
+						printf("alphapath exsists: %s\n", alphapath.str().c_str());
+						int wa=0,ha=0;
+						uint8_t* alpha_img = stbi_load(alphapath.str().c_str(), &wa, &ha, &comp, 4);
+						if (!alpha_img) {
+							throw std::runtime_error{"Could not load alpha image "s + alphapath.str()};
+						}
+						ScopeGuard mem_guard{[&]() { stbi_image_free(alpha_img); }};
+						if (wa != dst.res.x() || ha != dst.res.y()) {
+							throw std::runtime_error{std::string{"Alpha image has wrong resolution: "} + alphapath.str()};
+						}
+						tlog::success() << "Alpha loaded from " << alphapath;
+						for (int i=0;i<dst.res.prod();++i) {
+							img[i*4+3] = uint8_t(255.0f*srgb_to_linear(alpha_img[i*4]*(1.f/255.f))); // copy red channel of alpha to alpha.png to our alpha channel
 						}
 					}
-				}
 
-				dst.pixels = img;
-				dst.image_type = EImageDataType::Byte;
-			}
-
-			if (!dst.pixels) {
-				// throw std::runtime_error{ "image not found: " + path.str() };
-				throw std::runtime_error{ "image not found: " + img_path };
-			}
-
-			if (enable_depth_loading && info.depth_scale > 0.f && frame.contains("depth_path")) {
-				fs::path depthpath = basepath / std::string{frame["depth_path"]};
-				if (depthpath.exists()) {
-					int wa=0,ha=0;
-					dst.depth_pixels = stbi_load_16(depthpath.str().c_str(), &wa, &ha, &comp, 1);
-					if (!dst.depth_pixels) {
-						throw std::runtime_error{"Could not load depth image "s + depthpath.str()};
+					// Get maskpath (not used)
+					fs::path maskpath = path.parent_path()/(std::string{"dynamic_mask_"} + path.basename() + ".png");
+					if (maskpath.exists()) {
+						printf("alphapath exsists: %s\n", alphapath.str().c_str());
+						int wa=0,ha=0;
+						uint8_t* mask_img = stbi_load(maskpath.str().c_str(), &wa, &ha, &comp, 4);
+						if (!mask_img) {
+							throw std::runtime_error{std::string{"Could not load mask image "} + maskpath.str()};
+						}
+						ScopeGuard mem_guard{[&]() { stbi_image_free(mask_img); }};
+						if (wa != dst.res.x() || ha != dst.res.y()) {
+							throw std::runtime_error{std::string{"Mask image has wrong resolution: "} + maskpath.str()};
+						}
+						dst.mask_color = 0x00FF00FF; // HOT PINK
+						for (int i = 0; i < dst.res.prod(); ++i) {
+							if (mask_img[i*4] != 0) {
+								*(uint32_t*)&img[i*4] = dst.mask_color;
+							}
+						}
 					}
-					if (wa != dst.res.x() || ha != dst.res.y()) {
-						throw std::runtime_error{std::string{"Depth image has wrong resolution: "} + depthpath.str()};
+
+					dst.pixels = img; // the image data
+					dst.image_type = EImageDataType::Byte;
+				}
+				// ==================== End loading image data =====================
+
+				// If no image data is loaded
+				if (!dst.pixels) {
+					// throw std::runtime_error{ "image not found: " + path.str() };
+					throw std::runtime_error{ "image not found: " + img_path };
+				}
+
+				// Get depth_path (not used)
+				// enable_depth_loading = true by default
+				// info.depth_scale = -1.f by default
+				if (enable_depth_loading && info.depth_scale > 0.f && frame.contains("depth_path")) {
+					fs::path depthpath = basepath / std::string{frame["depth_path"]};
+					if (depthpath.exists()) {
+						int wa=0,ha=0;
+						dst.depth_pixels = stbi_load_16(depthpath.str().c_str(), &wa, &ha, &comp, 1);
+						if (!dst.depth_pixels) {
+							throw std::runtime_error{"Could not load depth image "s + depthpath.str()};
+						}
+						if (wa != dst.res.x() || ha != dst.res.y()) {
+							throw std::runtime_error{std::string{"Depth image has wrong resolution: "} + depthpath.str()};
+						}
+						//tlog::success() << "Depth loaded from " << depthpath;
 					}
-					//tlog::success() << "Depth loaded from " << depthpath;
-				}
-			}
-
-			fs::path rayspath = path.parent_path()/(std::string{"rays_"} + path.basename() + ".dat");
-			if (enable_ray_loading && rayspath.exists()) {
-				uint32_t n_pixels = dst.res.prod();
-				dst.rays = (Ray*)malloc(n_pixels * sizeof(Ray));
-
-				std::ifstream rays_file{rayspath.str(), std::ios::binary};
-				rays_file.read((char*)dst.rays, n_pixels * sizeof(Ray));
-
-				std::streampos fsize = 0;
-				fsize = rays_file.tellg();
-				rays_file.seekg(0, std::ios::end);
-				fsize = rays_file.tellg() - fsize;
-
-				if (fsize > 0) {
-					tlog::warning() << fsize << " bytes remaining in rays file " << rayspath;
 				}
 
-				for (uint32_t px = 0; px < n_pixels; ++px) {
-					result.nerf_ray_to_ngp(dst.rays[px]);
+				// Get rayspath (not used)
+				fs::path rayspath = path.parent_path()/(std::string{"rays_"} + path.basename() + ".dat");
+				if (enable_ray_loading && rayspath.exists()) {
+					printf("Loading rays...\n");
+					uint32_t n_pixels = dst.res.prod();
+					dst.rays = (Ray*)malloc(n_pixels * sizeof(Ray));
+
+					std::ifstream rays_file{rayspath.str(), std::ios::binary};
+					rays_file.read((char*)dst.rays, n_pixels * sizeof(Ray));
+
+					std::streampos fsize = 0;
+					fsize = rays_file.tellg();
+					rays_file.seekg(0, std::ios::end);
+					fsize = rays_file.tellg() - fsize;
+
+					if (fsize > 0) {
+						tlog::warning() << fsize << " bytes remaining in rays file " << rayspath;
+					}
+
+					for (uint32_t px = 0; px < n_pixels; ++px) {
+						result.nerf_ray_to_ngp(dst.rays[px]);
+					}
+					result.has_rays = true;
 				}
-				result.has_rays = true;
-			}
 
-			nlohmann::json& jsonmatrix_start = frame.contains("transform_matrix_start") ? frame["transform_matrix_start"] : frame["transform_matrix"];
-			nlohmann::json& jsonmatrix_end =   frame.contains("transform_matrix_end") ? frame["transform_matrix_end"] : jsonmatrix_start;
+				// load "transform_matrix" (camera to world transformation)
+				// In NeuS2 static scenes, jsonmatrix_start and jsonmatrix_end are both just "transform_matrix"
+				nlohmann::json& jsonmatrix_start = frame.contains("transform_matrix_start") ? frame["transform_matrix_start"] : frame["transform_matrix"];
+				nlohmann::json& jsonmatrix_end =   frame.contains("transform_matrix_end") ? frame["transform_matrix_end"] : jsonmatrix_start;
 
-			if (frame.contains("driver_parameters")) {
-				Eigen::Vector3f light_dir(
-					frame["driver_parameters"].value("LightX", 0.f),
-					frame["driver_parameters"].value("LightY", 0.f),
-					frame["driver_parameters"].value("LightZ", 0.f)
-				);
-				result.metadata[i_img].light_dir = result.nerf_direction_to_ngp(light_dir.normalized());
-				result.has_light_dirs = true;
-				result.n_extra_learnable_dims = 0;
-			}
-
-			auto read_focal_length = [&](int resolution, const std::string& axis) {
-				if (frame.contains(axis + "_fov")) {
-					return fov_to_focal_length(resolution, (float)frame[axis + "_fov"]);
-				} else if (json.contains("fl_"s + axis)) {
-					return (float)json["fl_"s + axis];
-				} else if (json.contains("camera_angle_"s + axis)) {
-					return fov_to_focal_length(resolution, (float)json["camera_angle_"s + axis] * 180 / PI());
-				} else {
-					return 0.0f;
+				// (not used)
+				if (frame.contains("driver_parameters")) {
+					Eigen::Vector3f light_dir(
+						frame["driver_parameters"].value("LightX", 0.f),
+						frame["driver_parameters"].value("LightY", 0.f),
+						frame["driver_parameters"].value("LightZ", 0.f)
+					);
+					result.metadata[i_img].light_dir = result.nerf_direction_to_ngp(light_dir.normalized());
+					result.has_light_dirs = true;
+					result.n_extra_learnable_dims = 0;
 				}
-			};
 
-			// x_fov is in degrees, camera_angle_x in radians. Yes, it's silly.
-			float x_fl = read_focal_length(dst.res.x(), "x");
-			float y_fl = read_focal_length(dst.res.y(), "y");
+				// lambda function to read focal length
+				auto read_focal_length = [&](int resolution, const std::string& axis) {
+					if (frame.contains(axis + "_fov")) { // (not used)
+						return fov_to_focal_length(resolution, (float)frame[axis + "_fov"]);
+					} else if (json.contains("fl_"s + axis)) { // (not used)
+						return (float)json["fl_"s + axis];
+					} else if (json.contains("camera_angle_"s + axis)) { // (not used)
+						return fov_to_focal_length(resolution, (float)json["camera_angle_"s + axis] * 180 / PI());
+					} else {
+						// printf("read_focal_length returns 0.0f\n"); // debug
+						return 0.0f;
+					}
+				};
 
-			if (x_fl != 0) {
-				result.metadata[i_img].focal_length = Vector2f::Constant(x_fl);
-				if (y_fl != 0) {
-					result.metadata[i_img].focal_length.y() = y_fl;
+				// x_fov is in degrees, camera_angle_x in radians. Yes, it's silly.
+				float x_fl = read_focal_length(dst.res.x(), "x"); // x focal length = 0
+				float y_fl = read_focal_length(dst.res.y(), "y"); // y focal length = 0
+
+
+				// Set result.metadata
+				if (x_fl != 0) {
+					result.metadata[i_img].focal_length = Vector2f::Constant(x_fl);
+					if (y_fl != 0) {
+						result.metadata[i_img].focal_length.y() = y_fl;
+					}
+				} else if (y_fl != 0) {
+					result.metadata[i_img].focal_length = Vector2f::Constant(y_fl);
+				} else { // x focal length and y focal length are all 0's, use intrinsic matrix (NeuS2 used)
+					if (frame.contains("intrinsic_matrix")){
+						const auto& intrinsic = frame["intrinsic_matrix"]; // get intrinsic matrix
+
+						// Get fx
+						result.metadata[i_img].focal_length.x() = float(intrinsic[0][0]);
+
+						// Get fy
+						result.metadata[i_img].focal_length.y() = float(intrinsic[1][1]);
+
+						// Get principal points
+						// principal point is the intersection of camera z-axis and image plane (where the principal planes cross the optical axis)
+						result.metadata[i_img].principal_point.x() = float(intrinsic[0][2])/(float)json["w"];
+						result.metadata[i_img].principal_point.y() = float(intrinsic[1][2])/(float)json["h"];
+					}
+					else{
+						throw std::runtime_error{"Couldn't read fov."};
+					}
 				}
-			} else if (y_fl != 0) {
-				result.metadata[i_img].focal_length = Vector2f::Constant(y_fl);
-			} else {
-				if (frame.contains("intrinsic_matrix")){
-					const auto& intrinsic = frame["intrinsic_matrix"];
-					result.metadata[i_img].focal_length.x() = float(intrinsic[0][0]);
-					//  result.metadata[i_img].focal_length[0] = float(intrinsic[0][0]);
-					 result.metadata[i_img].focal_length.y() = float(intrinsic[1][1]);
-					//  result.metadata[i_img].focal_length[1] = float(intrinsic[1][1]);
-					 // principal_point = Vector2f{intrinsic[0][2],intrinsic[1][2]};
-					//  principal_point.x() = float(intrinsic[0][2])/(float)json["w"];
-					result.metadata[i_img].principal_point.x() = float(intrinsic[0][2])/(float)json["w"];
-					result.metadata[i_img].principal_point.y() = float(intrinsic[1][2])/(float)json["h"];
-					//  principal_point.x() = float(intrinsic[0][2]);
-					//  principal_point[0] = float(intrinsic[0][2]);
-					//  principal_point.y() = float(intrinsic[1][2])/(float)json["h"];
-					//  principal_point.y() = float(intrinsic[1][2]);
+
+				// Set result.xforms[i_img] (transformation matrix from camera to world)
+				for (int m = 0; m < 3; ++m) { // m = 0, 1, 2
+					for (int n = 0; n < 4; ++n) { // n = 0, 1, 2, 3
+						// In NeuS2 static scenes, jsonmatrix_start and jsonmatrix_end are both just "transform_matrix"
+						// Here, we are just taking the first three rows of "transform_matrix" and set result.xforms[i_img]
+						// transform_matrix[0][0], transform_matrix[0][1], transform_matrix[0][2], transform_matrix[0][3]
+						// transform_matrix[1][0], transform_matrix[1][1], transform_matrix[1][2], transform_matrix[1][3]
+						// transform_matrix[2][0], transform_matrix[2][1], transform_matrix[2][2], transform_matrix[2][3]
+
+						result.xforms[i_img].start(m, n) = float(jsonmatrix_start[m][n]);
+						result.xforms[i_img].end(m, n) = float(jsonmatrix_end[m][n]);
+					}
 				}
-				else{
-					throw std::runtime_error{"Couldn't read fov."};
-				}
-			}
 
-			for (int m = 0; m < 3; ++m) {
-				for (int n = 0; n < 4; ++n) {
-					result.xforms[i_img].start(m, n) = float(jsonmatrix_start[m][n]);
-					result.xforms[i_img].end(m, n) = float(jsonmatrix_end[m][n]);
-				}
-			}
+				// Set rolling shutter (https://en.wikipedia.org/wiki/Rolling_shutter)
+				// By default: rolling_shutter = Vector4f::Zero()
+				result.metadata[i_img].rolling_shutter = rolling_shutter;
 
-			result.metadata[i_img].rolling_shutter = rolling_shutter;
-			// result.metadata[i_img].principal_point = principal_point;
-			result.metadata[i_img].camera_distortion = camera_distortion;
+				// result.metadata[i_img].principal_point = principal_point;
 
-			result.xforms[i_img].start = result.nerf_matrix_to_ngp(result.xforms[i_img].start);
-			result.xforms[i_img].end = result.nerf_matrix_to_ngp(result.xforms[i_img].end);
+				// Set camera distortion
+				// By default: camera_distortion = {}
+				result.metadata[i_img].camera_distortion = camera_distortion;
 
-			progress.update(++n_loaded);
-		}, futures);
 
+				// Apply scaling and shifring to result.xforms[i_img] (transformation matrix from camera to world)
+				// Convert nerf matrix to ngp matrix (apply scaling and shifting)
+				result.xforms[i_img].start = result.nerf_matrix_to_ngp(result.xforms[i_img].start);
+				result.xforms[i_img].end = result.nerf_matrix_to_ngp(result.xforms[i_img].end);
+
+				// Update progress for printing 
+				progress.update(++n_loaded);
+			}, 
+
+			futures); // futures = futures, provides a mechanism to access the result of asynchronous operations:
+
+		}
+
+		// In NeuS2
+		// Update the number of images
 		if (json.contains("frames")) {
 			image_idx += json["frames"].size();
 		}
@@ -720,7 +822,7 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	tlog::success() << "Loaded " << images.size() << " images after " << tlog::durationToString(progress.duration());
 	tlog::info() << "  cam_aabb=" << cam_aabb;
 
-	if (result.has_rays) {
+	if (result.has_rays) { // By default, result.has_rays = false (not used)
 		tlog::success() << "Loaded per-pixel rays.";
 	}
 	if (!images.empty() && images[0].mask_color) {
@@ -733,10 +835,15 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	// copy / convert images to the GPU
 	for (uint32_t i = 0; i < result.n_images; ++i) {
 		const LoadedImageInfo& m = images[i];
-		result.set_training_image(i, m.res, m.pixels, m.depth_pixels, m.depth_scale * result.scale, m.image_data_on_gpu, m.image_type, EDepthDataType::UShort, sharpen_amount, m.white_transparent, m.black_transparent, m.mask_color, m.rays);
+		
+		// Set a training image
+		result.set_training_image(i, m.res, m.pixels, m.depth_pixels, m.depth_scale * result.scale, 
+								  m.image_data_on_gpu, m.image_type, EDepthDataType::UShort, sharpen_amount, 
+								  m.white_transparent, m.black_transparent, m.mask_color, m.rays);
 		CUDA_CHECK_THROW(cudaDeviceSynchronize());
 	}
 	CUDA_CHECK_THROW(cudaDeviceSynchronize());
+	
 	// free memory
 	for (uint32_t i = 0; i < result.n_images; ++i) {
 		if (images[i].image_data_on_gpu) {
@@ -747,10 +854,16 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 		free(images[i].rays);
 		free(images[i].depth_pixels);
 	}
+
 	return result;
 }
 
-void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image_resolution, const void* pixels, const void* depth_pixels, float depth_scale, bool image_data_on_gpu, EImageDataType image_type, EDepthDataType depth_type, float sharpen_amount, bool white_transparent, bool black_transparent, uint32_t mask_color, const Ray *rays) {
+void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image_resolution, const void* pixels, 
+									const void* depth_pixels, float depth_scale, bool image_data_on_gpu, 
+									EImageDataType image_type, EDepthDataType depth_type, float sharpen_amount, 
+									bool white_transparent, bool black_transparent, uint32_t mask_color, 
+									const Ray *rays) 
+{
 	if (frame_idx < 0 || frame_idx >= n_images) {
 		throw std::runtime_error{"NerfDataset::set_training_image: invalid frame index"};
 	}
@@ -778,14 +891,25 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 	pixelmemory[frame_idx].resize(img_size * image_type_size(image_type));
 	void* dst = pixelmemory[frame_idx].data();
 
+	// image_type = EImageDataType::Byte is used
+	// convert_rgba32() is called (apply modifications on the pixels, in NeuS2 actually nothing is actually modified)
 	switch (image_type) {
 		default: throw std::runtime_error{"unknown image type in set_training_image"};
-		case EImageDataType::Byte: linear_kernel(convert_rgba32, 0, nullptr, n_pixels, (uint8_t*)pixels, (uint8_t*)dst, white_transparent, black_transparent, mask_color); break;
+		case EImageDataType::Byte: 
+			// GPU parallel computing for all the pixels in the image to call convert_rgba32()
+			// kernel = convert_rgba32( n_pixels,  pixels, dst, white_transparent, black_transparent, mask_color), 
+			//                     	shmem_size = 0
+			// 								stream = nullptr
+			// 									n_elements = n_pixels (number of pixels)
+			// 													.. args = {pixels, dst, white_transparent, black_transparent, mask_color}
+			linear_kernel(convert_rgba32, 0, nullptr, n_pixels, (uint8_t*)pixels, (uint8_t*)dst, 
+						  										white_transparent, black_transparent, mask_color); 
+			break;
 		case EImageDataType::Half: // fallthrough is intended
 		case EImageDataType::Float: CUDA_CHECK_THROW(cudaMemcpy(dst, pixels, img_size * image_type_size(image_type), image_data_on_gpu ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice)); break;
 	}
 
-	// copy over depths if provided
+	// copy over depths if provided (not used)
 	if (depth_scale >= 0.f) {
 		depthmemory[frame_idx].resize(img_size);
 		float* depth_dst = depthmemory[frame_idx].data();
@@ -805,7 +929,7 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 		depthmemory[frame_idx].free_memory();
 	}
 
-	// apply requested sharpening
+	// apply requested sharpening (not used)
 	if (sharpen_amount > 0.f) {
 		if (image_type == EImageDataType::Byte) {
 			tcnn::GPUMemory<uint8_t> images_data_half(img_size * sizeof(__half));
@@ -830,6 +954,7 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 		dst = pixelmemory[frame_idx].data();
 	}
 
+	// sharpness_data
 	if (sharpness_data.size()>0) {
 		// compute overall sharpness
 		const dim3 threads = { 16, 8, 1 };
@@ -838,11 +963,12 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 		compute_sharpness<<<blocks, threads, 0, nullptr>>>(sharpness_resolution, image_resolution, 1, dst, image_type, sharpness_data.data() + sharpness_resolution.x() * sharpness_resolution.y() * (size_t)frame_idx);
 	}
 
+	// Set metadata for NerfDataset
 	metadata[frame_idx].pixels = pixelmemory[frame_idx].data();
 	metadata[frame_idx].depth = depthmemory[frame_idx].data();
 	metadata[frame_idx].resolution = image_resolution;
 	metadata[frame_idx].image_data_type = image_type;
-	if (rays) {
+	if (rays) { // (not used)
 		raymemory[frame_idx].resize(n_pixels);
 		CUDA_CHECK_THROW(cudaMemcpy(raymemory[frame_idx].data(), rays, n_pixels * sizeof(Ray), cudaMemcpyHostToDevice));
 	} else {

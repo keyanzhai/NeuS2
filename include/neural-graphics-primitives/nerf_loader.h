@@ -41,7 +41,7 @@ struct TrainingImageMetadata {
 
 	CameraDistortion camera_distortion = {};
 	Eigen::Vector2i resolution = Eigen::Vector2i::Zero();
-	Eigen::Vector2f principal_point = Eigen::Vector2f::Constant(0.5f);
+	Eigen::Vector2f principal_point = Eigen::Vector2f::Constant(0.5f); // principal point is the intersection of camera z-axis and image plane (where the principal planes cross the optical axis)
 	Eigen::Vector2f focal_length = Eigen::Vector2f::Constant(1000.f);
 	Eigen::Vector4f rolling_shutter = Eigen::Vector4f::Zero();
 	Eigen::Vector3f light_dir = Eigen::Vector3f::Constant(0.f); // TODO: replace this with more generic float[] of task-specific metadata.
@@ -71,7 +71,7 @@ struct NerfDataset {
 	std::vector<tcnn::GPUMemory<float>> depthmemory;
 
 	std::vector<TrainingImageMetadata> metadata;
-	std::vector<TrainingXForm> xforms;
+	std::vector<TrainingXForm> xforms; // a vector of (transformation matrices from camera to world) for each image
 	tcnn::GPUMemory<float> sharpness_data;
 	Eigen::Vector2i sharpness_resolution = {0, 0};
 	tcnn::GPUMemory<float> envmap_data;
@@ -111,12 +111,18 @@ struct NerfDataset {
 
 	Eigen::Matrix<float, 3, 4> nerf_matrix_to_ngp(const Eigen::Matrix<float, 3, 4>& nerf_matrix) {
 		Eigen::Matrix<float, 3, 4> result = nerf_matrix;
-		result.col(1) *= -1;
-		result.col(2) *= -1;
-		result.col(3) = result.col(3) * scale + offset;
+		
+		// Eigen::Matrix is 0-indexed 
+		// result.col(0) column 1 is the same as nerf_matrix column 1
+		result.col(1) *= -1; // negate column 2
+		result.col(2) *= -1; // negate column 3
+		result.col(3) = result.col(3) * scale + offset; // scale and shift column 4
+
 		if (from_na){
-			result.col(1) *= -1;
-			result.col(2) *= -1;
+			// In NeuS2, this should always be true
+			// printf("inside nerf_matrix_to_ngp(), from_na = true\n"); // debug
+			result.col(1) *= -1; // negate column 2 -> same as nerf_matrix column 2
+			result.col(2) *= -1; // negate column 3 -> same as nerf_matrix column 3
 		}
 		else if (from_mitsuba) {
 			result.col(0) *= -1;
@@ -129,6 +135,8 @@ struct NerfDataset {
 			result.row(2) = tmp;
 		}
 
+		// result: first 3 columns are the same as the nerf_matrix
+		//         last column is scaled and shifted
 		return result;
 	}
 

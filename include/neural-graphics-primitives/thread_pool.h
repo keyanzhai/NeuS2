@@ -72,7 +72,7 @@ public:
     void waitUntilFinishedFor(const std::chrono::microseconds Duration);
     void flushQueue();
 
-    template <typename Int, typename F>
+    template <typename Int, typename F>                        // std::future: The class template std::future provides a mechanism to access the result of asynchronous operations:
     void parallelForAsync(Int start, Int end, F body, std::vector<std::future<void>>& futures) {
         Int localNumThreads = (Int)mNumThreads;
 
@@ -80,13 +80,17 @@ public:
         Int chunk = (range / localNumThreads) + 1;
 
         for (Int i = 0; i < localNumThreads; ++i) {
-            futures.emplace_back(enqueueTask([i, chunk, start, end, body] {
-                Int innerStart = start + i * chunk;
-                Int innerEnd = std::min(end, start + (i + 1) * chunk);
-                for (Int j = innerStart; j < innerEnd; ++j) {
-                    body(j);
-                }
-            }));
+            futures.emplace_back(
+                enqueueTask(
+                    [i, chunk, start, end, body] {
+                        Int innerStart = start + i * chunk;
+                        Int innerEnd = std::min(end, start + (i + 1) * chunk);
+                        for (Int j = innerStart; j < innerEnd; ++j) {
+                            body(j);
+                        }
+                    }
+                )
+            );
         }
     }
 

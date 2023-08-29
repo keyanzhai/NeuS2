@@ -27,6 +27,7 @@ ThreadPool::ThreadPool(size_t maxNumThreads, bool force) {
 	if (!force) {
 		maxNumThreads = min((size_t)thread::hardware_concurrency(), maxNumThreads);
 	}
+	printf("maxNumThreads: %d\n",maxNumThreads);
 	startThreads(maxNumThreads);
 	mNumTasksInSystem.store(0);
 }
