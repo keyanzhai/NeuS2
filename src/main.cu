@@ -125,7 +125,10 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
+
+	// Set mode (here, only NeRF), create testbed, load training data, load training config file, start GUI, perform training
 	try {
+		// Set mode (here, only NeRF)
 		ETestbedMode mode;
 		if (!mode_flag) {
 			if (!scene_flag) {
@@ -164,7 +167,15 @@ int main(int argc, char** argv) {
 				return 1;
 			}
 		}
+		std::string mode_str;
+		switch (mode) {
+			case ETestbedMode::Nerf:   mode_str = "nerf";   break;
+			case ETestbedMode::Sdf:    mode_str = "sdf";    break;
+			case ETestbedMode::Image:  mode_str = "image";  break;
+			case ETestbedMode::Volume: mode_str = "volume"; break;
+		}
 
+		// Create testbed for NeRF
 		Testbed testbed{mode};
 
 		// Load training data
@@ -177,15 +188,9 @@ int main(int argc, char** argv) {
 			testbed.load_training_data(scene_path.str());
 		}
 
-		std::string mode_str;
-		switch (mode) {
-			case ETestbedMode::Nerf:   mode_str = "nerf";   break;
-			case ETestbedMode::Sdf:    mode_str = "sdf";    break;
-			case ETestbedMode::Image:  mode_str = "image";  break;
-			case ETestbedMode::Volume: mode_str = "volume"; break;
-		}
 
 		// Load network from snapshot or config file based on snapshot_flag
+		// By defualt, the config file "config/base.json" will be used.
 		if (snapshot_flag) {
 			// Load network from a snapshot if one is provided
 			fs::path snapshot_path = get(snapshot_flag);
@@ -208,6 +213,7 @@ int main(int argc, char** argv) {
 					network_config_path = network_config_str;
 				}
 			} else {
+				// By default, the config file used is "config/base.json"
 				network_config_path = network_config_path/"base.json";
 			}
 
@@ -220,18 +226,19 @@ int main(int argc, char** argv) {
 			testbed.m_train = !no_train_flag;
 		}
 
+		// Start GUI
 		bool gui = !no_gui_flag;
 #ifndef NGP_GUI
 		gui = false;
 #endif
-
 		if (gui) {
 			testbed.init_window(width_flag ? get(width_flag) : 1920, height_flag ? get(height_flag) : 1080);
 		}
 
+		// ======================= Training =======================
 		// Render/training loop
 		while (testbed.frame()) {
-			if (!gui) {
+			if (!gui) { // If not using GUI, print out loss info
 				tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val();
 				// tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val() << " lr=" << testbed.m_optimizer.learning_rate();
 			}

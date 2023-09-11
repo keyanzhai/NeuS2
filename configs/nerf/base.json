@@ -120,9 +120,9 @@
 	},
 	"hyperparams": {
 		"linear_color": false,
-		"first_frame_max_training_step": 2000,
-		"next_frame_max_training_step": 1300,
-		"predict_global_movement": true,
+		"first_frame_max_training_step": 10000,
+		"next_frame_max_training_step": 1000,
+		"predict_global_movement": false,
 		"predict_global_movement_training_step": 100,
 		"finetune_global_movement": true,
 		"mask_loss_weight": 0.0,

@@ -454,12 +454,12 @@ public:
 
 	Eigen::Vector3f m_first_frame_offset = Eigen::Vector3f::Constant(0);
 
-	uint32_t first_frame_max_training_step = 2000u;
-	uint32_t next_frame_max_training_step = 1000u;
+	uint32_t first_frame_max_training_step = 2000u; // Needs to be set in config file
+	uint32_t next_frame_max_training_step = 1000u; // Needs to be set in config file
 	
 	// global movement config
-	bool m_predict_global_movement = false;
-	uint32_t m_predict_global_movement_training_step = 300u;
+	bool m_predict_global_movement = false; // Needs to be set in config file
+	uint32_t m_predict_global_movement_training_step = 300u; // Needs to be set in config file
 
 	// reset density grid
 	bool m_reset_density_grid_after_global_movement = true;

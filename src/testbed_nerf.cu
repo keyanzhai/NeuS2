@@ -2949,12 +2949,14 @@ void Testbed::create_empty_nerf_dataset(size_t n_images, int aabb_scale, bool is
 
 void Testbed::load_nerf() {
 	if (!m_data_path.empty()) {
-
+		
+		// If data_path is a directory, it contains multiple json files, which are for dynamic scene reconstruction
 		if (m_data_path.is_directory()) {
 			for (const auto& path : fs::directory{m_data_path}) {
 				if (path.is_file() && equals_case_insensitive(path.extension(), "json")) {
 					auto idx = path.basename().find("downsample");
 					if (idx == std::string::npos)
+						// Add all the json files in all_json_paths
 						all_json_paths.emplace_back(path);
 				}
 			}
@@ -2968,10 +2970,13 @@ void Testbed::load_nerf() {
 			throw std::runtime_error{"NeRF data path must either be a json file or a directory containing json files."};
 		}
 		
+		// "all_json_paths contains" all the json files for the dynamic scene or a single json file for static scene
 		// sorted all_json_paths
 		std::sort(all_json_paths.begin(), all_json_paths.end(), [](const fs::path& a, const fs::path& b) {
 			return a.basename() < b.basename();
 		});
+
+		// Print all the json files in "all_json_paths"
 		// printf all_json_path
 		for (const auto& path : all_json_paths) {
 			printf("founded json file: %s\n", path.str().c_str());
@@ -2980,11 +2985,13 @@ void Testbed::load_nerf() {
 		all_training_time_frame = all_json_paths.size();
 		printf("total frame (number of json paths): %d\n",all_training_time_frame);
 
+		// Get one temporary json file (the first json file in "all_json_paths")
 		std::vector<fs::path> tmp_json_paths;
 		tmp_json_paths.emplace_back(all_json_paths[0]);
 		printf("tmp_json_paths size: %d\n", (int)tmp_json_paths.size());
 
 		// Get nerf dataset
+		// Load nerf for the temporary json files
 		m_nerf.training.dataset = ngp::load_nerf(tmp_json_paths, m_nerf.sharpen); // load_nerf() defined in `nerf_loader.cu` Line 197
 	}
 
