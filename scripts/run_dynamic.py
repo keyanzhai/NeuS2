@@ -49,7 +49,7 @@ def parse_args():
 	parser.add_argument("--dynamic_test", action="store_true")
 	parser.add_argument("--dynamic_save_mesh", action='store_true')
 	parser.add_argument("--dynamic_save_mesh_only", action='store_true')
-	parser.add_argument('--test_camera_view', type=int, default=0)
+	parser.add_argument('--test_camera_view', type=int, default=5, help="Which camera view to render: [gp01, gp02, gp03, gp04, gp05]. Value must be between [1, 5].") # this is specifying the saved camera view [gp01, gp02, gp03, gp04, gp05]
 	parser.add_argument('--test_psnr', action='store_true')
 	parser.add_argument("--white_bkgd", action='store_true')
 	parser.add_argument('--render_img_HW', type=int, default=None)
@@ -92,7 +92,7 @@ def parse_args():
 if __name__ == "__main__":
 	args = parse_args()
 
-	args.output_path = os.path.join('output',args.name)
+	args.output_path = os.path.join('output',args.name) # e.g. "NeuS2/output/ego4d-150-sam-track"
 	os.makedirs(os.path.join(args.output_path,"checkpoints"), exist_ok=True)
 	os.makedirs(os.path.join(args.output_path,"mesh"), exist_ok=True)
 	
@@ -205,7 +205,7 @@ if __name__ == "__main__":
 			json.dump(all_results, f, indent = 4)
 
 
-	else:
+	else: # By default, this will run
 		ref_transforms = {}
 		if args.screenshot_transforms: # try to load the given file straight away
 			print("Screenshot transforms from ", args.screenshot_transforms)
@@ -267,12 +267,13 @@ if __name__ == "__main__":
 		total_steps = 0
 		# if args.scene is a directory
 		if os.path.isdir(args.scene):
+			# The list of all the json files under "data/ego4d/dynamic-scene/train-10-manual"
 			all_transform_path = sorted(list(filter(lambda path:"downsample" not in path.split('/')[-1], glob.glob(args.scene+'/*.json'))))
 		else:
 			all_transform_path = [args.scene]
-		all_pred_img = []
-		all_gt_img = []
-		all_pred_mesh = []
+		# all_pred_img = []
+		# all_gt_img = []
+		# all_pred_mesh = []
 
 		if args.test_psnr:
 			ref_images = load_ref_images(args, all_transform_path[testbed.current_training_time_frame])
@@ -290,7 +291,9 @@ if __name__ == "__main__":
 					repl(testbed)
 
 				total_steps += 1
-				if total_steps % 20 == 0:
+				
+				# Every 100 optimization step, print some information
+				if total_steps % 100 == 0:
 					print(f"training time_frame: {testbed.current_training_time_frame}, training step: {testbed.training_step}, training_time: {time.monotonic()-print_now}, trainig_rgb_loss:{testbed.loss}")
 					writer_all.add_scalar('loss/rgb_loss', testbed.loss, total_steps)
 					writer_all.add_scalar('loss/ek_loss', testbed.ek_loss, total_steps)
@@ -300,7 +303,10 @@ if __name__ == "__main__":
 					writer_frame.add_scalar('loss/ek_loss', testbed.ek_loss, testbed.training_step)
 					writer_frame.add_scalar('loss/mask_loss', testbed.mask_loss, testbed.training_step)
 
-				if (testbed.current_training_time_frame == 0 and testbed.training_step == testbed.first_frame_max_training_step) or (testbed.current_training_time_frame != 0 and testbed.training_step == testbed.next_frame_max_training_step):
+				# If training the first frame and it's last optimization step or
+				# If training any subsequent frame, and it's last optimization step: 
+				if (testbed.current_training_time_frame == 0 and testbed.training_step == testbed.first_frame_max_training_step) \
+					or (testbed.current_training_time_frame != 0 and testbed.training_step == testbed.next_frame_max_training_step):
 
 					print(f"training frame {testbed.current_training_time_frame} for time :{time.monotonic() - now}\n", file=training_log_ptr)
 				
@@ -311,10 +317,10 @@ if __name__ == "__main__":
 						testbed.save_snapshot(save_snapshot_path, False)
 
 					# save transform
-					os.makedirs(os.path.join(args.output_path,"pred_transform"), exist_ok=True)
-					save_transform_path = os.path.join(args.output_path,"pred_transform",f"frame_{testbed.current_training_time_frame}.txt")
-					print(f"Saving transform to {save_transform_path} ...")
-					testbed.save_transform(save_transform_path)
+					# os.makedirs(os.path.join(args.output_path,"pred_transform"), exist_ok=True)
+					# save_transform_path = os.path.join(args.output_path,"pred_transform",f"frame_{testbed.current_training_time_frame}.txt")
+					# print(f"Saving transform to {save_transform_path} ...")
+					# testbed.save_transform(save_transform_path)
 
 					if args.save_mesh:
 						res = args.marching_cubes_res
@@ -325,13 +331,16 @@ if __name__ == "__main__":
 
 					
 					training_log_ptr.flush()
+
+					# Render the image
+					# The image is saved inside render_img_training_view
 					pred_img, gt_img, pred_mesh = render_img_training_view(args, testbed, eval_log_ptr, all_transform_path[testbed.current_training_time_frame], testbed.current_training_time_frame)
 
-					all_pred_img.append(pred_img.astype(np.uint8))
-					all_gt_img.append(gt_img.astype(np.uint8))
-					if pred_mesh is not None:
-						all_pred_mesh.append(pred_mesh[:,:,[2,1,0]].astype(np.uint8))
-
+					# all_pred_img.append(pred_img.astype(np.uint8))
+					# all_gt_img.append(gt_img.astype(np.uint8))
+					# if pred_mesh is not None:
+						# all_pred_mesh.append(pred_mesh[:,:,[2,1,0]].astype(np.uint8))
+# 
 					# update frame writer
 					if testbed.current_training_time_frame != testbed.all_training_time_frame - 1:
 						writer_frame = SummaryWriter(log_dir=os.path.join('output',  args.name, 'logs', time_name, f'frame_{testbed.current_training_time_frame + 1}'))
@@ -340,16 +349,19 @@ if __name__ == "__main__":
 					now = time.monotonic()
 					print_now = time.monotonic()
 
-				if (testbed.current_training_time_frame > 0 and testbed.current_training_time_frame == testbed.all_training_time_frame - 1 and testbed.training_step >= testbed.next_frame_max_training_step)  or (testbed.current_training_time_frame == 0 and testbed.current_training_time_frame == testbed.all_training_time_frame - 1 and testbed.training_step >= testbed.first_frame_max_training_step):
+				# If training ends:
+				if (testbed.current_training_time_frame > 0 and testbed.current_training_time_frame == testbed.all_training_time_frame - 1 and testbed.training_step >= testbed.next_frame_max_training_step) \
+					or (testbed.current_training_time_frame == 0 and testbed.current_training_time_frame == testbed.all_training_time_frame - 1 and testbed.training_step >= testbed.first_frame_max_training_step):
 					break
 
-
-			video_path = os.path.join(args.output_path, 'video',f'{args.test_camera_view:04}')
-			os.makedirs(video_path, exist_ok=True)
-			imageio.mimsave(os.path.join(video_path,'pred_img.gif'),all_pred_img,fps=10)
-			imageio.mimsave(os.path.join(video_path,'gt_img.gif'),all_gt_img,fps=10)
-			if len(all_pred_mesh) > 0:
-				imageio.mimsave(os.path.join(video_path,'pred_mesh.gif'),all_pred_mesh,fps=10)
+			
+			# Save the videos
+			# video_path = os.path.join(args.output_path, 'video',f'{args.test_camera_view:04}')
+			# os.makedirs(video_path, exist_ok=True)
+			# imageio.mimsave(os.path.join(video_path,'pred_img.gif'),all_pred_img,fps=10)
+			# imageio.mimsave(os.path.join(video_path,'gt_img.gif'),all_gt_img,fps=10)
+			# if len(all_pred_mesh) > 0:
+				# imageio.mimsave(os.path.join(video_path,'pred_mesh.gif'),all_pred_mesh,fps=10)
 
 
 

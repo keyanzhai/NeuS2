@@ -250,18 +250,27 @@ def cal_psnr_old(testbed, ref_images, skip=5, log_ptr=None, save_image=False, sa
     return avg_psnr    
 
 def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 0, training_step = -1):
-    eval_path = args.output_path
+
+    print("training_step = ", training_step)
+    eval_path = args.output_path # e.g. "NeuS2/output/ego4d-150-sam-track"
     os.makedirs(eval_path, exist_ok=True)
-    img_path = os.path.join(eval_path, 'images',f'{args.test_camera_view:04}')
+
+    camera_view = args.test_camera_view - 1 # By default, camera_view = 5 - 1 = 4
+    ego4d_cameras = ["gp01_0", "gp02_0", "gp03_0", "gp04_0", "gp05_0"]
+    camera_name = ego4d_cameras[camera_view] # By default, "gp05_0"
+
+    img_path = os.path.join(eval_path, 'images', camera_name) # e.g. "NeuS2/output/ego4d-150-sam-track/images/gp05_0"
     os.makedirs(img_path, exist_ok=True)
     print("Evaluating test transforms from ", args.scene, file=log_ptr)
     log_ptr.flush()
+
+    # image_dir: the particular transform.json file of the current frame
     with open(image_dir) as f:
-        test_transforms = json.load(f)
-    if os.path.isfile(args.scene):
+        test_transforms = json.load(f) # The json file of the current frame
+    if os.path.isfile(args.scene): # if provided scene path is a file (for static scene)
         data_dir=os.path.dirname(args.scene)
-    else:
-        data_dir=args.scene
+    else: # if provided scene path is a folder (for dynamic scene)
+        data_dir=args.scene # "NeuS2/data/ego4d/dynamic-scene/train-150-sam-track"
     totmse = 0
     totpsnr = 0
     totssim = 0
@@ -279,23 +288,13 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
 
     testbed.nerf.rendering_min_transmittance = 1e-4
 
-    camera_view = args.test_camera_view
-    frame = test_transforms["frames"][camera_view]
-    p = frame["file_path"]
-    if "." not in p:
-        p = p + ".png"
+    # The saved camera view [gp01, gp02, gp03, gp04, gp05], by default it's 5, i.e. gp05
+    frame = test_transforms["frames"][camera_view] # By default, camera_view = 4
+    p = frame["file_path"] # p =  "../images/012960/012960_gp01_0_lh.png"
     p = p.replace("\\", "/")
-    ref_fname = os.path.join(data_dir, p)
-    if not os.path.isfile(ref_fname):
-        ref_fname = os.path.join(data_dir, p + ".png")
-        if not os.path.isfile(ref_fname):
-            ref_fname = os.path.join(data_dir, p + ".jpg")
-            if not os.path.isfile(ref_fname):
-                ref_fname = os.path.join(data_dir, p + ".jpeg")
-                if not os.path.isfile(ref_fname):
-                    ref_fname = os.path.join(data_dir, p + ".exr")
 
-    ref_image = read_image(ref_fname)
+    ref_fname = os.path.join(data_dir, p) # Path to the image file at the specified camera_view
+    ref_image = read_image(ref_fname) # Read the reference image
 
     # NeRF blends with background colors in sRGB space, rather than first
     # transforming to linear space, blending there, and then converting back.
@@ -311,36 +310,55 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
         ref_image += (1.0 - ref_image[...,3:4]) * testbed.background_color
         ref_image[...,:3] = srgb_to_linear(ref_image[...,:3])
     
+    # Save gt/ref image
     if training_step < 0:
-        write_image(join(img_path,f"frame_{frame_time_id:06}_gt.png"), ref_image)
+        # Save the reference image to e.g. "NeuS2/output/ego4d-150-sam-track/images/gp05_0"
+        # write_image(join(img_path,f"frame_{frame_time_id:06}_gt.png"), ref_image)
+        pass
     else:
-        os.makedirs(os.path.join(img_path, f"frame_{frame_time_id:06}"), exist_ok=True)
-        write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_gt.png"), ref_image)
+        print("this should never be printed")
+
+        pass
+        # os.makedirs(os.path.join(img_path, f"frame_{frame_time_id:06}"), exist_ok=True)
+        # write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_gt.png"), ref_image)
 
     H = ref_image.shape[0]
     W = ref_image.shape[1] # original H W
-    if args.render_img_HW is not None:
+    
+    if args.render_img_HW is not None: # By default this won't run
         # resize ref_image
         ref_image = cv2.resize(ref_image, (args.render_img_HW, args.render_img_HW), interpolation=cv2.INTER_AREA)
 
     testbed.reset_camera()
-    testbed.set_camera_to_training_view(camera_view)
+    testbed.set_camera_to_training_view(camera_view) # By default, camera_view = 4
+
+    # CUDA error happens (out of memory)
+    # Calling "Testbed::render_to_cpu"
     image = testbed.render(ref_image.shape[1], ref_image.shape[0], spp, True)
 
+    # Save rendered image
     if training_step < 0:
         write_image(join(img_path,f"frame_{frame_time_id:06}_pred.png"), image)
     else:
-        write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_pred.png"), image)
+        print("this should never be printed")
+
+        pass
+        # write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_pred.png"), image)
     
     diffimg = np.absolute(image - ref_image)
     diffimg[...,3:4] = 1.0
 
+    # Save diff of rendered image and ref image
     if training_step < 0:
         write_image(join(img_path,f"frame_{frame_time_id:06}_diff.png"), diffimg)
     else:
-        write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_diff.png"), diffimg)
-        return
+        print("this should never be printed")
+
+        pass
+        # write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_diff.png"), diffimg)
+        # return
     
+
     A = np.clip(linear_to_srgb(image[...,:3]), 0.0, 1.0)
     R = np.clip(linear_to_srgb(ref_image[...,:3]), 0.0, 1.0)
     mse = float(compute_error("MSE", A, R))
@@ -356,12 +374,11 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     psnr_avgmse = mse2psnr(totmse/(totcount or 1))
     psnr = totpsnr/(totcount or 1)
     ssim = totssim/(totcount or 1)
-    print(f"camera_view:{camera_view}, frame_time:{frame_time_id}: PSNR={psnr} SSIM={ssim}", file=log_ptr)
+    print(f"camera_view={camera_name}, frame_numbe={frame_time_id}: PSNR={psnr} SSIM={ssim}", file=log_ptr) # print to file
     log_ptr.flush() # write immediately to file
 
     normal_img = None
-    if args.save_mesh:
-        ## render mesh normal
+    if args.save_mesh: ## render mesh normal
         mesh = trimesh.load(args.save_mesh_path)
         vex = mesh.vertices
         faces = mesh.faces
@@ -416,6 +433,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
         normal_img = render_mesh(renderer, vex.astype(np.float32), faces, ixt, ext, shaded = args.shaded_mesh)
         cv2.imwrite(join(img_path,f"frame_{frame_time_id:06}_mesh.png"), normal_img)
 
+    #      pred_img           gt_img                 pred_mesh = None by default
     return load_image(image), load_image(ref_image), normal_img
 
 from pytorch3d_utils import *
