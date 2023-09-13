@@ -52,7 +52,7 @@ def parse_args():
 	parser.add_argument('--test_camera_view', type=int, default=5, help="Which camera view to render: [gp01, gp02, gp03, gp04, gp05]. Value must be between [1, 5].") # this is specifying the saved camera view [gp01, gp02, gp03, gp04, gp05]
 	parser.add_argument('--test_psnr', action='store_true')
 	parser.add_argument("--white_bkgd", action='store_true')
-	parser.add_argument('--render_img_HW', type=int, default=None)
+	parser.add_argument('--render_img_HW', type=int, default=None, help="Percentage of original size for the rendered images.")
 
 	parser.add_argument("--save_mesh", action="store_true")
 	parser.add_argument("--save_mesh_path", default="", help="Output a marching-cubes based mesh from the NeRF or SDF model. Supports OBJ and PLY format.")
@@ -303,6 +303,7 @@ if __name__ == "__main__":
 					writer_frame.add_scalar('loss/ek_loss', testbed.ek_loss, testbed.training_step)
 					writer_frame.add_scalar('loss/mask_loss', testbed.mask_loss, testbed.training_step)
 
+				# If final optimization step for a frame:
 				# If training the first frame and it's last optimization step or
 				# If training any subsequent frame, and it's last optimization step: 
 				if (testbed.current_training_time_frame == 0 and testbed.training_step == testbed.first_frame_max_training_step) \

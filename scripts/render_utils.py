@@ -327,34 +327,43 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     
     if args.render_img_HW is not None: # By default this won't run
         # resize ref_image
-        ref_image = cv2.resize(ref_image, (args.render_img_HW, args.render_img_HW), interpolation=cv2.INTER_AREA)
+        # ref_image = cv2.resize(ref_image, (args.render_img_HW, args.render_img_HW), interpolation=cv2.INTER_AREA)
+
+        # ===== Resize the ref_image =====
+        scale_percent = 10 # percent of original size
+        width = int(ref_image.shape[1] * scale_percent / 100)
+        height = int(ref_image.shape[0] * scale_percent / 100)
+        dim = (width, height)
+        ref_image = cv2.resize(ref_image, dim, interpolation = cv2.INTER_AREA)
+        # ================================
 
     testbed.reset_camera()
     testbed.set_camera_to_training_view(camera_view) # By default, camera_view = 4
 
     # CUDA error happens (out of memory)
-    # Calling "Testbed::render_to_cpu"
+    # Calling "Testbed::render_to_cpu()" -> "Testbed::render_to_cpu()" -> "Testbed::render_to_cpu()"
     image = testbed.render(ref_image.shape[1], ref_image.shape[0], spp, True)
 
     # Save rendered image
     if training_step < 0:
-        write_image(join(img_path,f"frame_{frame_time_id:06}_pred.png"), image)
+        write_image(join(img_path,f"frame_{frame_time_id:06}_{camera_name}_pred.png"), image)
     else:
         print("this should never be printed")
 
         pass
         # write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_pred.png"), image)
     
-    diffimg = np.absolute(image - ref_image)
-    diffimg[...,3:4] = 1.0
 
     # Save diff of rendered image and ref image
-    if training_step < 0:
-        write_image(join(img_path,f"frame_{frame_time_id:06}_diff.png"), diffimg)
-    else:
-        print("this should never be printed")
+    # diffimg = np.absolute(image - ref_image)
+    # diffimg[...,3:4] = 1.0
 
-        pass
+    # if training_step < 0:
+        # write_image(join(img_path,f"frame_{frame_time_id:06}_diff.png"), diffimg)
+    # else:
+        # print("this should never be printed")
+
+        # pass
         # write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_diff.png"), diffimg)
         # return
     

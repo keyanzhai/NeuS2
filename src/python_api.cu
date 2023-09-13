@@ -120,16 +120,22 @@ pybind11::dict Testbed::compute_marching_cubes_mesh(Eigen::Vector3i res3d, Bound
 	return py::dict("V"_a=cpuverts, "N"_a=cpunormals, "C"_a=cpucolors, "F"_a=cpuindices);
 }
 
-py::array_t<float> Testbed::render_to_cpu(int width, int height, int spp, bool linear, float start_time, float end_time, float fps, float shutter_fraction) {
+// Renders an image at the requested resolution. Does not require a window
+py::array_t<float> Testbed::render_to_cpu(int width, int height, // 1920, 1080
+										  int spp, bool linear,  // 1, true
+										  float start_time, float end_time,  // -1.f, -1.f
+										  float fps, float shutter_fraction) { // 30.f, 1.0f
 	m_windowless_render_surface.resize({width, height});
 	m_windowless_render_surface.reset_accumulation();
 
+	// end_time = -1
 	if (end_time < 0.f) {
 		end_time = start_time;
 	}
 
 	auto start_cam_matrix = m_smoothed_camera;
 
+	// start_time = -1
 	if (start_time >= 0.f) {
 		set_camera_from_time(end_time);
 		apply_camera_smoothing(1000.f / fps);
@@ -139,6 +145,7 @@ py::array_t<float> Testbed::render_to_cpu(int width, int height, int spp, bool l
 
 	auto end_cam_matrix = m_smoothed_camera;
 
+	// spp = 8
 	for (int i = 0; i < spp; ++i) {
 		float start_alpha = ((float)i)/(float)spp * shutter_fraction;
 		float end_alpha = ((float)i + 1.0f)/(float)spp * shutter_fraction;
@@ -164,7 +171,9 @@ py::array_t<float> Testbed::render_to_cpu(int width, int height, int spp, bool l
 	py::array_t<float> result({height, width, 4});
 	py::buffer_info buf = result.request();
 
-	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(buf.ptr, width * sizeof(float) * 4, m_windowless_render_surface.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
+	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(buf.ptr, width * sizeof(float) * 4, 
+										   m_windowless_render_surface.surface_provider().array(), 
+										   0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
 	return result;
 }
 

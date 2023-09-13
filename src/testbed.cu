@@ -252,7 +252,7 @@ void Testbed::set_view_dir(const Vector3f& dir) {
 	set_look_at(old_look_at);
 }
 
-void Testbed::set_camera_to_training_view(int trainview) {
+void Testbed::set_camera_to_training_view(int trainview) { // set camera to the i-th training view
 	auto old_look_at = look_at();
 	m_camera = m_smoothed_camera = get_xform_given_rolling_shutter(m_nerf.training.transforms[trainview], m_nerf.training.dataset.metadata[trainview].rolling_shutter, Vector2f{0.5f, 0.5f}, 0.0f);
 	m_relative_focal_length = m_nerf.training.dataset.metadata[trainview].focal_length / (float)m_nerf.training.dataset.metadata[trainview].resolution[m_fov_axis];
@@ -1493,7 +1493,7 @@ void Testbed::train_and_render(bool skip_rendering) {
 			}
 		}
 #endif
-	} else {
+	} else { // not single view / multi-view
 #ifdef NGP_GUI
 		// Don't do DLSS when multi-view rendering
 		m_dlss = false;
@@ -1738,15 +1738,20 @@ bool Testbed::frame() {
 	} catch (SharedQueueEmptyException&) {}
 
 	// check training step
+	// If current frame is trained for enough training step, go to next frame 
 	if (((current_training_time_frame == 0) && m_training_step >= first_frame_max_training_step) || 
 		((current_training_time_frame > 0) && m_training_step >= next_frame_max_training_step)){
-		m_training_to_next_frame = true;
+		m_training_to_next_frame = true; // We are going to train the next frame
 	}
-	if ( m_training_to_next_frame ){
-		training_network_next_frame();
+	if ( m_training_to_next_frame ){ // If we are going to train the next frame
+		if (training_network_next_frame() == false) {
+			return false;
+		}
 	}
 
+	// Train and render the current frame
 	train_and_render(skip_rendering);
+
 	if (m_testbed_mode == ETestbedMode::Sdf && m_sdf.calculate_iou_online) {
 		m_sdf.iou = calculate_iou(m_train ? 64*64*64 : 128*128*128, m_sdf.iou_decay, false, true); //  intersection over union
 		m_sdf.iou_decay = 0.f;
@@ -1927,53 +1932,53 @@ __global__ void add_mesh_pos(
 	mesh_pos_i(0, i) = mesh_vex[i * 3 + dim];
 }
 
-void Testbed::change_to_frame(uint32_t frame_idx) {
-	current_training_time_frame = frame_idx;
+// void Testbed::change_to_frame(uint32_t frame_idx) {
+// 	current_training_time_frame = frame_idx;
 	
-	printf("changing data to frame: %d, total frame: %d\n",current_training_time_frame, all_training_time_frame - 1);
+// 	printf("changing data to frame: %d, total frame: %d\n",current_training_time_frame, all_training_time_frame - 1);
 
-	load_nerf(current_training_time_frame);
-	m_training_step = 0;
-	m_canonical_training_step = 0;
+// 	load_nerf(current_training_time_frame);
+// 	m_training_step = 0;
+// 	m_canonical_training_step = 0;
 
-	// logging
-	float this_frame_training_itme = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_training_one_time_frame_point).count();
-	log_fp = fopen(m_log_path.str().c_str(), "a+");
-	if (!log_fp)
-		printf("no file");
-	else{
-		fprintf(log_fp, "training frame %d for time :%f\n", current_training_time_frame - 1, this_frame_training_itme);
-		fclose(log_fp);
-	}
-	m_training_one_time_frame_point = std::chrono::steady_clock::now();
+// 	// logging
+// 	float this_frame_training_itme = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_training_one_time_frame_point).count();
+// 	log_fp = fopen(m_log_path.str().c_str(), "a+");
+// 	if (!log_fp)
+// 		printf("no file");
+// 	else{
+// 		fprintf(log_fp, "training frame %d for time :%f\n", current_training_time_frame - 1, this_frame_training_itme);
+// 		fclose(log_fp);
+// 	}
+// 	m_training_one_time_frame_point = std::chrono::steady_clock::now();
 
 
-	// reset optimizer and trainer
-	json config = m_network_config;
+// 	// reset optimizer and trainer
+// 	json config = m_network_config;
 
-	json& encoding_config = config["encoding"];
-	json& loss_config = config["loss"];
-	json& optimizer_config = config["optimizer"];
-	json& network_config = config["network"];
+// 	json& encoding_config = config["encoding"];
+// 	json& loss_config = config["loss"];
+// 	json& optimizer_config = config["optimizer"];
+// 	json& network_config = config["network"];
 
-	loss_config["otype"] = "L2";
+// 	loss_config["otype"] = "L2";
 	
-	// Find leaf optimizer and update its settings
-	json* leaf_optimizer_config = &optimizer_config;
-	while (leaf_optimizer_config->contains("nested")) {
-		leaf_optimizer_config = &(*leaf_optimizer_config)["nested"];
-	}
-	(*leaf_optimizer_config)["optimize_canonical_params"] = false;
+// 	// Find leaf optimizer and update its settings
+// 	json* leaf_optimizer_config = &optimizer_config;
+// 	while (leaf_optimizer_config->contains("nested")) {
+// 		leaf_optimizer_config = &(*leaf_optimizer_config)["nested"];
+// 	}
+// 	(*leaf_optimizer_config)["optimize_canonical_params"] = false;
 
-	m_loss.reset(create_loss<precision_t>(loss_config));
-	m_optimizer.reset(create_optimizer<precision_t>(optimizer_config));
+// 	m_loss.reset(create_loss<precision_t>(loss_config));
+// 	m_optimizer.reset(create_optimizer<precision_t>(optimizer_config));
 
-	m_training_step = 0;
-	m_canonical_training_step = 0;
-	m_training_start_time_point = std::chrono::steady_clock::now();
-	m_training_one_time_frame_point = std::chrono::steady_clock::now();
+// 	m_training_step = 0;
+// 	m_canonical_training_step = 0;
+// 	m_training_start_time_point = std::chrono::steady_clock::now();
+// 	m_training_one_time_frame_point = std::chrono::steady_clock::now();
 
-}
+// }
 
 void Testbed::prepare_for_test() {
 
@@ -2001,6 +2006,7 @@ bool Testbed::training_network_next_frame() {
 	current_training_time_frame += 1;
 	printf("changing data to next frame: %d, total frame: %d\n",current_training_time_frame, all_training_time_frame - 1);
 
+	// Load next frame's data
 	load_nerf(current_training_time_frame);
 	m_training_step = 0;
 	m_canonical_training_step = 0;
