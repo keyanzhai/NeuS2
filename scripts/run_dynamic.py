@@ -335,7 +335,7 @@ if __name__ == "__main__":
 
 					# Render the image
 					# The image is saved inside render_img_training_view
-					pred_img, gt_img, pred_mesh = render_img_training_view(args, testbed, eval_log_ptr, all_transform_path[testbed.current_training_time_frame], testbed.current_training_time_frame)
+					# pred_img, gt_img, pred_mesh = render_img_training_view(args, testbed, eval_log_ptr, all_transform_path[testbed.current_training_time_frame], testbed.current_training_time_frame)
 
 					# all_pred_img.append(pred_img.astype(np.uint8))
 					# all_gt_img.append(gt_img.astype(np.uint8))
