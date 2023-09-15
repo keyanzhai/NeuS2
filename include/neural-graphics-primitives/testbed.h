@@ -1,5 +1,5 @@
 /** @file   testbed.h
- *  @author Yiming Wang <w752531540@gmail.com>
+ *  @author Keyan Zhai <keyanzhai3@gmail.com>
  */
 
 

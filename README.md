@@ -4,7 +4,7 @@
 
 > NeuS2: Fast Learning of Neural Implicit Surfaces for Multi-view Reconstruction
 
-> [Yiming Wang*](https://19reborn.github.io/), Qin Han*, [Marc Habermann](https://people.mpi-inf.mpg.de/~mhaberma/), [Kostas Daniilidis](https://www.cis.upenn.edu/~kostas/), [Christian Theobalt](http://people.mpi-inf.mpg.de/~theobalt/), [Lingjie Liu](https://lingjie0206.github.io/)
+> [Keyan Zhai*](https://19reborn.github.io/), Qin Han*, [Marc Habermann](https://people.mpi-inf.mpg.de/~mhaberma/), [Kostas Daniilidis](https://www.cis.upenn.edu/~kostas/), [Christian Theobalt](http://people.mpi-inf.mpg.de/~theobalt/), [Lingjie Liu](https://lingjie0206.github.io/)
 
 > ICCV 2023
 
