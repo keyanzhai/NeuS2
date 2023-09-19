@@ -1401,8 +1401,15 @@ void Testbed::draw_gui() {
 }
 #endif //NGP_GUI
 
+/**
+ * @brief Train and render the current frame. 
+ * 
+ * @param skip_rendering If we are skip rendering for the current frame.
+ * 	
+*/
 void Testbed::train_and_render(bool skip_rendering) {
 	if (m_train) {
+		// Train the current frame with specified batch size 
 		train(m_training_batch_size);
 	}
 
@@ -1710,6 +1717,10 @@ void Testbed::destroy_window() {
 #endif //NGP_GUI
 }
 
+/**
+ * @brief Train one frame.
+ * @return Returns false if all the training is done. Otherwise, returns true
+*/
 bool Testbed::frame() {
 #ifdef NGP_GUI
 	if (m_render_window) {
@@ -1722,6 +1733,9 @@ bool Testbed::frame() {
 	// Render against the trained neural network. If we're training and already close to convergence,
 	// we can skip rendering if the scene camera doesn't change
 	// uint32_t n_to_skip = m_train ? tcnn::clamp(m_training_step / 16u, 15u, 255u) : 0;
+
+	// Set n_to_skip to clampped m_canonical_training_step or 0 based on m_train
+	// Clamp m_canonical_training_step / 16u between [15u, 255u]
 	uint32_t n_to_skip = m_train ? tcnn::clamp(m_canonical_training_step / 16u, 15u, 255u) : 0;
 	if (m_render_skip_due_to_lack_of_camera_movement_counter > n_to_skip) {
 		m_render_skip_due_to_lack_of_camera_movement_counter = 0;
@@ -1739,11 +1753,16 @@ bool Testbed::frame() {
 
 	// check training step
 	// If current frame is trained for enough training step, go to next frame 
-	if (((current_training_time_frame == 0) && m_training_step >= first_frame_max_training_step) || 
-		((current_training_time_frame > 0) && m_training_step >= next_frame_max_training_step)){
+	// current_training_time_frame: the frame number currently being training
+	if (((current_training_time_frame == 0) && m_training_step >= first_frame_max_training_step) || // First frame trained for enough steps
+		((current_training_time_frame > 0) && m_training_step >= next_frame_max_training_step)){ // Subsequent frame trained for enough steps
 		m_training_to_next_frame = true; // We are going to train the next frame
 	}
-	if ( m_training_to_next_frame ){ // If we are going to train the next frame
+
+	// If we are going to train the next frame:
+	// Update frame number to next frame. Load data for next frame. Reset optimizer and trainer. Reset training steps. 
+	// End training if reaching last frame. 
+	if ( m_training_to_next_frame ) {
 		if (training_network_next_frame() == false) {
 			return false;
 		}
@@ -1994,6 +2013,12 @@ void Testbed::prepare_for_test() {
 	}
 }
 
+/**
+ * @brief Update frame number to next frame. Load data for next frame. Reset optimizer and trainer. Reset training steps. 
+ * 
+ * @return Returns false if reaching last frame, training should be ended. Otherwise returns true.
+ * 
+*/
 bool Testbed::training_network_next_frame() {
 	assert(m_training_to_next_frame);
 	m_training_to_next_frame = false;
@@ -2634,6 +2659,13 @@ Testbed::~Testbed() {
 	}
 }
 
+/**
+ * @brief Train the current frame with specified batch size. 
+ * 
+ * By default, batch_size = 1 << 18 = 2 ^ 18 = 262144
+ * 
+ * 
+*/
 void Testbed::train(uint32_t batch_size) {
 	if (!m_training_data_available) {
 		m_train = false;
@@ -2646,13 +2678,9 @@ void Testbed::train(uint32_t batch_size) {
 	}
 
 	m_nerf_network->m_training_step = m_training_step;
-	if (current_training_time_frame >= 1) {
-		m_nerf_network->encoding()->set_training_step(m_training_step - m_predict_global_movement_training_step); // for progressive learning
-	}
-	else {
-		m_nerf_network->encoding()->set_training_step(m_training_step);
-	}
 
+	// If for any subsequent frame, the current training step is equal to predict_global_movement_training_step (w/o GTP it's 0)
+	// meaning the GTP training steps end, start remaining training
 	if (m_training_step == m_predict_global_movement_training_step && current_training_time_frame >= 1){
 		m_train_canonical = true;
 		if (!m_finetune_global_movement){
@@ -2662,21 +2690,17 @@ void Testbed::train(uint32_t batch_size) {
 			reset_density_grid_nerf(m_training_stream);
 		}
 	}
-		
-	uint32_t n_prep_to_skip = (m_testbed_mode == ETestbedMode::Nerf) ? tcnn::clamp(m_canonical_training_step / 16u, 1u, 16u) : 1u;
+	
+	uint32_t n_prep_to_skip = tcnn::clamp(m_canonical_training_step / 16u, 1u, 16u);
 	if (m_canonical_training_step % n_prep_to_skip == 0) {
 		auto start = std::chrono::steady_clock::now();
 		ScopeGuard timing_guard{[&]() {
 			m_training_prep_ms.update(std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now()-start).count() / n_prep_to_skip);
 		}};
-
-		switch (m_testbed_mode) {
-			case ETestbedMode::Nerf:   training_prep_nerf(batch_size, m_training_stream);  break;
-			case ETestbedMode::Sdf:    training_prep_sdf(batch_size, m_training_stream);   break;
-			case ETestbedMode::Image:  training_prep_image(batch_size, m_training_stream); break;
-			case ETestbedMode::Volume: training_prep_volume(batch_size, m_training_stream); break;
-			default: throw std::runtime_error{"Invalid training mode."};
-		}
+        
+		// Prepare training for NeRF
+		// update_density_grid_nerf() is run
+		training_prep_nerf(batch_size, m_training_stream);
 
 		CUDA_CHECK_THROW(cudaStreamSynchronize(m_training_stream));
 	}
@@ -2698,35 +2722,33 @@ void Testbed::train(uint32_t batch_size) {
 	    m_trainer->optimizer()->set_learning_rate((*leaf_optimizer_config)["after_learning_rate"]);
 	}
 
+	// Set train delta
 	m_nerf_network->m_train_delta = m_train_delta;
-	if (current_training_time_frame == 0 || !m_train_delta){
+	if (current_training_time_frame == 0 || !m_train_delta){ // if first frame
 		m_nerf_network->m_use_delta = false;
 	}
-	else if (current_training_time_frame != 0 && m_train_delta){
+	else if (current_training_time_frame != 0 && m_train_delta){ // if not first frame
 		m_nerf_network->m_use_delta = true;
 	}
 
 	m_nerf_network->m_train_canonical = m_train_canonical;
 
+	// Get training loss every 16 steps
 	bool get_loss_scalar = m_training_step % 16 == 0;
 
-	{
+	{	// Perform training for current frame
 		auto start = std::chrono::steady_clock::now();
 		ScopeGuard timing_guard{[&]() {
 			m_training_ms.update(std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now()-start).count());
 		}};
 
-		switch (m_testbed_mode) {
-			case ETestbedMode::Nerf:   train_nerf(batch_size, get_loss_scalar, m_training_stream); break;
-			case ETestbedMode::Sdf:    train_sdf(batch_size, get_loss_scalar, m_training_stream); break;
-			case ETestbedMode::Image:  train_image(batch_size, get_loss_scalar, m_training_stream); break;
-			case ETestbedMode::Volume: train_volume(batch_size, get_loss_scalar, m_training_stream); break;
-			default: throw std::runtime_error{"Invalid training mode."};
-		}
+		// Train the NeRF model for the current frame
+		train_nerf(batch_size, get_loss_scalar, m_training_stream);
 
 		CUDA_CHECK_THROW(cudaStreamSynchronize(m_training_stream));
 	}
 
+	// Update loss graph every 16 steps
 	if (get_loss_scalar) {
 		update_loss_graph();
 	}

@@ -58,36 +58,65 @@ struct RaysNerfSoa {
 };
 
 
+/**
+ * @struct NerfPosition
+ * @brief The 3d position of a point in 3d space
+ * 
+ * 
+*/
 struct NerfPosition {
 	NGP_HOST_DEVICE NerfPosition(const Eigen::Vector3f& pos, float dt)
 	:
 	p{pos}
 	// x{pos.x()}
 	{}
-	Eigen::Vector3f p;
+	Eigen::Vector3f p; /**< The (x, y, z) coordinate of this point */
 	// float x;
 };
 
+/**
+ * @struct NerfDirection
+ * @brief The direction of a vector / ray in 3d space.
+ * 
+ * 
+*/
 struct NerfDirection {
 	NGP_HOST_DEVICE NerfDirection(const Eigen::Vector3f& dir, float dt) : d{dir} {}
 	Eigen::Vector3f d;
 };
 
+/**
+ * @struct NerfCoordinate
+ * @brief The coordinate of a sampled point along a ray in NeRF, including its position and the direction of the ray its on.
+ * 
+ * 
+*/
 struct NerfCoordinate {
-	NGP_HOST_DEVICE NerfCoordinate(const Eigen::Vector3f& pos, const Eigen::Vector3f& dir, float dt) : pos{pos, dt}, dt{dt}, dir{dir, dt} {}
-	NGP_HOST_DEVICE void set_with_optional_extra_dims(const Eigen::Vector3f& pos, const Eigen::Vector3f& dir, float dt, const float* extra_dims, uint32_t stride_in_bytes) {
+	NGP_HOST_DEVICE NerfCoordinate(const Eigen::Vector3f& pos, const Eigen::Vector3f& dir, float dt) 
+		: pos{pos, dt}, dt{dt}, dir{dir, dt}
+	{}
+	
+	/**
+	 * @brief Set dt, the position, and direction of the ray for a sampled point. Copy extra dimensions (?).
+	 * 
+	*/
+	NGP_HOST_DEVICE void set_with_optional_extra_dims(const Eigen::Vector3f& pos, const Eigen::Vector3f& dir, 
+													  float dt, const float* extra_dims, uint32_t stride_in_bytes) {
 		this->dt = dt;
 		this->pos = NerfPosition(pos, dt);
 		this->dir = NerfDirection(dir, dt);
 		copy_extra_dims(extra_dims, stride_in_bytes);
 	}
+	
 	inline NGP_HOST_DEVICE const float* get_extra_dims() const { return (const float*)(this + 1); }
+	
 	inline NGP_HOST_DEVICE float* get_extra_dims() { return (float*)(this + 1); }
 
 	NGP_HOST_DEVICE void copy(const NerfCoordinate& inp, uint32_t stride_in_bytes) {
 		*this = inp;
 		copy_extra_dims(inp.get_extra_dims(), stride_in_bytes);
 	}
+
 	NGP_HOST_DEVICE inline void copy_extra_dims(const float *extra_dims, uint32_t stride_in_bytes) {
 		if (stride_in_bytes >= sizeof(NerfCoordinate)) {
 			float* dst = get_extra_dims();
@@ -96,9 +125,9 @@ struct NerfCoordinate {
 		}
 	}
 
-	NerfPosition pos;
-	float dt;
-	NerfDirection dir;
+	NerfPosition pos; /**< The 3d position of the sampled point. */
+	float dt; /**< The dt for this sampled point on the ray. */
+	NerfDirection dir; /**< The direction of this sampled point's ray. */
 };
 
 NGP_NAMESPACE_END

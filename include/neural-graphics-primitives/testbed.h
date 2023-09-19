@@ -534,9 +534,18 @@ public:
 
 	bool m_gui_redraw = true;
 
+	/**
+	 * @struct NerF
+	 * @brief Nerf related data. Defined variable "m_nerf". 
+	 * 
+	*/
 	struct Nerf {
-		NerfTracer tracer;
+		NerfTracer tracer;  /**< Nerf Tracer */
 
+		/**
+		 * @struct Training
+		 * @brief NeRF training related data. Defined variable "training".
+		*/
 		struct Training {
 			NerfDataset dataset;
 			int n_images_for_training = 0; // how many images to train from, as a high watermark compared to the dataset size
@@ -587,15 +596,20 @@ public:
 			float intrinsic_l2_reg = 1e-4f;
 			float exposure_l2_reg = 0.0f;
 
+			/**
+			 * @struct Counters
+			 * @brief Counter for Nerf training of a single frame.
+			 * 
+			*/
 			struct Counters {
-				tcnn::GPUMemory<uint32_t> numsteps_counter; // number of steps each ray took
-				tcnn::GPUMemory<uint32_t> numsteps_counter_compacted; // number of steps each ray took
-				tcnn::GPUMemory<float> loss;
-				tcnn::GPUMemory<float> ek_loss;
-				tcnn::GPUMemory<float> mask_loss;
+				tcnn::GPUMemory<uint32_t> numsteps_counter;  /**< number of steps each ray took */ 
+				tcnn::GPUMemory<uint32_t> numsteps_counter_compacted; /**< number of steps each ray took */
+				tcnn::GPUMemory<float> loss; // Color Loss
+				tcnn::GPUMemory<float> ek_loss; // Eikonal Loss
+				tcnn::GPUMemory<float> mask_loss; // Mask Loss
 
 				uint32_t rays_per_batch = 1<<12;
-				uint32_t n_rays_total = 0;
+				uint32_t n_rays_total = 0; /**< the total number of rays so far for the current frame */
 				uint32_t measured_batch_size = 0;
 				uint32_t measured_batch_size_before_compaction = 0;
 
@@ -866,7 +880,7 @@ public:
 
 	uint32_t m_training_step = 0;
 	int m_canonical_training_step = 0;
-	uint32_t m_training_batch_size = 1 << 18;
+	uint32_t m_training_batch_size = 1 << 18; // default batch size = 2^18 = 262144
 
 	Ema m_loss_scalar = {EEmaType::Time, 100};
 	Ema m_ek_loss_scalar = {EEmaType::Time, 100};

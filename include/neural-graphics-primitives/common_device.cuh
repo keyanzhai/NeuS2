@@ -632,6 +632,13 @@ inline NGP_HOST_DEVICE uint64_t pixel_idx(const Eigen::Vector2f& xy, const Eigen
 // 	return read_val(image_pos(pos, resolution));
 // }
 
+
+/**
+ * @brief Read pixel data from an image buffer and convert it into a 4-component floating-point RGBA (Red, Green, Blue, Alpha) color representation.
+ * 
+ * 
+ * 
+*/
 inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen::Vector2i& resolution, const void* pixels, EImageDataType image_data_type, uint32_t img = 0) {
 	switch (image_data_type) {
 		default:
@@ -662,6 +669,15 @@ inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen:
 	}
 }
 
+/**
+ * @brief 
+ * 
+ * @param
+ * @param
+ * 
+ * 
+ * 
+*/
 inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2f pos, const Eigen::Vector2i& resolution, const void* pixels, EImageDataType image_data_type, uint32_t img = 0) {
 	return read_rgba(image_pos(pos, resolution), resolution, pixels, image_data_type, img);
 }
