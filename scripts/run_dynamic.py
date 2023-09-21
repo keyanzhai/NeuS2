@@ -49,7 +49,10 @@ def parse_args():
 	parser.add_argument("--dynamic_test", action="store_true")
 	parser.add_argument("--dynamic_save_mesh", action='store_true')
 	parser.add_argument("--dynamic_save_mesh_only", action='store_true')
-	parser.add_argument('--test_camera_view', type=int, default=5, help="Which camera view to render: [gp01, gp02, gp03, gp04, gp05]. Value must be between [1, 5].") # this is specifying the saved camera view [gp01, gp02, gp03, gp04, gp05]
+
+	parser.add_argument('--test_camera_view', type=int, default=0, help="Specify which camera view to render. Value must be between [0, num_cameras-1].") # this is specifying the saved camera view [gp01, gp02, gp03, gp04, gp05]
+
+
 	parser.add_argument('--test_psnr', action='store_true')
 	parser.add_argument("--white_bkgd", action='store_true')
 	parser.add_argument('--render_img_HW', type=int, default=None, help="Percentage of original size for the rendered images.")

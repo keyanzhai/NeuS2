@@ -250,17 +250,12 @@ def cal_psnr_old(testbed, ref_images, skip=5, log_ptr=None, save_image=False, sa
     return avg_psnr    
 
 def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 0, training_step = -1):
-
-    print("training_step = ", training_step)
-    eval_path = args.output_path # e.g. "NeuS2/output/ego4d-150-sam-track"
+    eval_path = args.output_path
     os.makedirs(eval_path, exist_ok=True)
-
-    camera_view = args.test_camera_view - 1 # By default, camera_view = 5 - 1 = 4
-    ego4d_cameras = ["gp01_0", "gp02_0", "gp03_0", "gp04_0", "gp05_0"]
-    camera_name = ego4d_cameras[camera_view] # By default, "gp05_0"
-
-    img_path = os.path.join(eval_path, 'images', camera_name) # e.g. "NeuS2/output/ego4d-150-sam-track/images/gp05_0"
+    
+    img_path = os.path.join(eval_path, 'images', 'final')
     os.makedirs(img_path, exist_ok=True)
+
     print("Evaluating test transforms from ", args.scene, file=log_ptr)
     log_ptr.flush()
 
@@ -288,7 +283,8 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
 
     testbed.nerf.rendering_min_transmittance = 1e-4
 
-    # The saved camera view [gp01, gp02, gp03, gp04, gp05], by default it's 5, i.e. gp05
+    # The saved camera view, by defaul it's the first camera
+    camera_view = args.test_camera_view
     frame = test_transforms["frames"][camera_view] # By default, camera_view = 4
     p = frame["file_path"] # p =  "../images/012960/012960_gp01_0_lh.png"
     p = p.replace("\\", "/")
@@ -313,8 +309,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     # Save gt/ref image
     if training_step < 0:
         # Save the reference image to e.g. "NeuS2/output/ego4d-150-sam-track/images/gp05_0"
-        # write_image(join(img_path,f"frame_{frame_time_id:06}_gt.png"), ref_image)
-        pass
+        write_image(join(img_path,f"gt.png"), ref_image)
     else:
         print("this should never be printed")
 
@@ -338,7 +333,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
         # ================================
 
     testbed.reset_camera()
-    testbed.set_camera_to_training_view(camera_view) # By default, camera_view = 4
+    testbed.set_camera_to_training_view(camera_view) # By default, camera_view = 0
 
     # CUDA error happens (out of memory)
     # Calling "Testbed::render_to_cpu()" -> "Testbed::render_to_cpu()" -> "Testbed::render_to_cpu()"
@@ -346,7 +341,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
 
     # Save rendered image
     if training_step < 0:
-        write_image(join(img_path,f"frame_{frame_time_id:06}_{camera_name}_pred.png"), image)
+        write_image(join(img_path,f"{camera_view}_pred.png"), image)
     else:
         print("this should never be printed")
 
@@ -355,17 +350,17 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     
 
     # Save diff of rendered image and ref image
-    # diffimg = np.absolute(image - ref_image)
-    # diffimg[...,3:4] = 1.0
+    diffimg = np.absolute(image - ref_image)
+    diffimg[...,3:4] = 1.0
 
-    # if training_step < 0:
-        # write_image(join(img_path,f"frame_{frame_time_id:06}_diff.png"), diffimg)
-    # else:
-        # print("this should never be printed")
+    if training_step < 0:
+        write_image(join(img_path,f"diff.png"), diffimg)
+    else:
+        print("this should never be printed")
 
-        # pass
-        # write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_diff.png"), diffimg)
-        # return
+        pass
+        write_image(join(img_path,f"frame_{frame_time_id:06}",f"frame_{frame_time_id:06}_{training_step}_diff.png"), diffimg)
+        return
     
 
     A = np.clip(linear_to_srgb(image[...,:3]), 0.0, 1.0)
@@ -383,7 +378,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     psnr_avgmse = mse2psnr(totmse/(totcount or 1))
     psnr = totpsnr/(totcount or 1)
     ssim = totssim/(totcount or 1)
-    print(f"camera_view={camera_name}, frame_numbe={frame_time_id}: PSNR={psnr} SSIM={ssim}", file=log_ptr) # print to file
+    print(f"camera_view={camera_view}, frame_numbe={frame_time_id}: PSNR={psnr} SSIM={ssim}", file=log_ptr) # print to file
     log_ptr.flush() # write immediately to file
 
     normal_img = None

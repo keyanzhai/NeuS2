@@ -61,8 +61,13 @@ def parse_args():
 
 	parser.add_argument("--sharpen", default=0, help="Set amount of sharpening applied to NeRF training images.")
 
+	# Save rendered results during the training process
+	parser.add_argument("--save_intermediate_render", action="store_true", help="Show rendered images in intermediate training steps.")
+	parser.add_argument("--render_step", type=int, default=100, help="Save rendered images every this many steps.")
+
 	## na_test
-	parser.add_argument('--test_camera_view', type=int,default=0)
+	parser.add_argument('--test_camera_view', type=int, default=0, help="Specify which camera view to render. Value must be between [0, num_cameras-1].") # this is specifying the saved camera view [gp01, gp02, gp03, gp04, gp05]
+
 	parser.add_argument('--test', action='store_true')
 	parser.add_argument('--render_img_HW', type=int, default=None)
 	parser.add_argument("--shaded_mesh", action='store_true')
@@ -125,6 +130,7 @@ if __name__ == "__main__":
 
 
 	if args.test:
+		print("test")
 		log_path = os.path.join(args.output_path, f"eval_log.txt")
 		log_ptr = open(log_path, "w+")
 
@@ -144,6 +150,7 @@ if __name__ == "__main__":
 		render_img_training_view(args, testbed, log_ptr, args.scene)
 
 	else:
+		print("no test")
 		ref_transforms = {}
 		if args.screenshot_transforms: # try to load the given file straight away
 			print("Screenshot transforms from ", args.screenshot_transforms)
@@ -193,10 +200,19 @@ if __name__ == "__main__":
 			# testbed.background_color = [1.0, 1.0, 1.0, 1.0]
 			# testbed.nerf.training.random_bg_color = False
 
+		camera_view = args.test_camera_view
+		eval_path = args.output_path
+		os.makedirs(eval_path, exist_ok=True)
+		
+		img_path = os.path.join(eval_path, 'images')
+		os.makedirs(img_path, exist_ok=True)
+
 		old_training_step = 0
 		n_steps = args.n_steps
 		if n_steps < 0:
 			n_steps = 100000
+
+		print("Total training steps = %d" % n_steps)
 
 		args.save_snapshot = os.path.join(args.output_path,"checkpoints",f"{n_steps}.msgpack")
 		args.save_mesh_path = os.path.join(args.output_path,"mesh",f"{n_steps}.obj")
@@ -231,6 +247,20 @@ if __name__ == "__main__":
 						writer.add_scalar('loss/rgb_loss', testbed.loss, testbed.training_step)
 						writer.add_scalar('loss/ek_loss', testbed.ek_loss, testbed.training_step)
 						writer.add_scalar('loss/mask_loss', testbed.mask_loss, testbed.training_step)
+					
+					# Save rendered image every 100 steps
+					if args.save_intermediate_render:
+						if testbed.training_step % args.render_step == 0:
+							testbed.reset_camera()
+							testbed.set_camera_to_training_view(camera_view) # By default, camera_view = 0
+
+							# CUDA error happens (out of memory)
+							# Calling "Testbed::render_to_cpu()" -> "Testbed::render_to_cpu()" -> "Testbed::render_to_cpu()"
+							image = testbed.render(1920, 1080, 8, True)
+
+							write_image(os.path.join(img_path,f"step_{testbed.training_step}_{camera_view}_pred.png"), image)
+
+
 
 
 		if args.save_snapshot:
