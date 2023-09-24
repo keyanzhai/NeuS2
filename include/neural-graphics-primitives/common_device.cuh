@@ -27,7 +27,14 @@ NGP_NAMESPACE_BEGIN
 
 using precision_t = tcnn::network_precision_t;
 
-
+/**
+ * @brief Convert a color value from the sRGB color space to the linear color space.
+ * 
+ * @param srgb A color value from the sRGB color space. Value between [0, 1].
+ * 
+ * @return The converted color value in linear color space. Value still between [0, 1].
+ * 
+*/
 inline __host__ __device__ float srgb_to_linear(float srgb) {
 	if (srgb <= 0.04045f) {
 		return srgb / 12.92f;
@@ -576,6 +583,12 @@ inline __host__ __device__ Eigen::Array3f to_rgb(const Eigen::Vector2f& dir) {
 	return hsv_to_rgb({atan2f(dir.y(), dir.x()) / (2.0f * PI()) + 0.5f, 1.0f, dir.norm()});
 }
 
+/**
+ * 
+ * 
+ * 
+ * 
+*/
 enum class EImageDataType {
 	None,
 	Byte,
@@ -635,9 +648,13 @@ inline NGP_HOST_DEVICE uint64_t pixel_idx(const Eigen::Vector2f& xy, const Eigen
 
 /**
  * @brief Read pixel data from an image buffer and convert it into a 4-component floating-point RGBA (Red, Green, Blue, Alpha) color representation.
+ * @param px The pixel position.
+ * @param resolution The resolution of the image
+ * @param pixels All the pixel data of the image
+ * @param image_data_type The data type of the image, defined with enum class EImageDataType. For non exr images, the data type is EImageDataType::Byte. For exr images, the data typ eis  EImageDataType::Half.
+ * @param img The image index, default = 0.
  * 
- * 
- * 
+ * @return If this pixel is background / transparent, i.e. alpha = 0, return {0, 0, 0, 0}; if If this pixel is foreground / opaque, i.e. alpha = 1, return {R, G, B, 1}, where R, G, B are between [0, 1]
 */
 inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen::Vector2i& resolution, const void* pixels, EImageDataType image_data_type, uint32_t img = 0) {
 	switch (image_data_type) {
@@ -646,17 +663,39 @@ inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen:
 			return Eigen::Array4f{5.0f, 0.0f, 0.0f, 1.0f};
 		case EImageDataType::Byte: {
 			uint8_t val[4];
-			*(uint32_t*)&val[0] = ((uint32_t*)pixels)[pixel_idx(px, resolution, img)];
-			if (*(uint32_t*)&val[0] == 0x00FF00FF) {
-				return Eigen::Array4f::Constant(-1.0f);
-			}
 
-			float alpha = (float)val[3] * (1.0f/255.0f); // [0 - 255] -> [0, 1]
+			// Get the pixel data at position "xy" from all the pixel data of the image "pixels"
+			// and assign that data to val
+			*(uint32_t*)&val[0] = ((uint32_t*)pixels)[pixel_idx(px, resolution, img)];
+			
+			// 0x00FF00FF is a hexadecimal representation of an ARGB color value (or RGBA?)
+			// This doesn't make any sense. This is magenta color.
+			// A: 00
+			// R: FF
+            // G: 00 -> FF?
+			// B: FF
+			// if (*(uint32_t*)&val[0] == 0x00FF00FF) { // this should be 0x00FFFFFF?
+			// 	return Eigen::Array4f::Constant(-1.0f);
+			// }
+
+			// Get the alpha value of this pixel.
+			// Alpha value is either 0 (bg) or 255 (fg)
+			// Convert it to either  0 (bg) or 1 (fg)
+			float alpha = (float)val[3] * (1.0f/255.0f); // [0 or 255] -> [0 or 1]
+
+			// First convert R/G/B value from [0, 255] to [0, 1],
+			// then convert R/G/B value from srgb color space to linear color space,
+			// finally times alpha value which is either 0 (bg) or 1 (fg).
+	
+			// If this pixel is background / transparent, i.e. alpha = 0,
+			// then R/G/B will be 0, returning {0, 0, 0, 0}.
+			// If this pixel is foreground / opaque, i.e. alpha = 1,
+			// then R/G/B will be their values in [0, 1] in linear color space, returning {R, G, B, 1}.
 			return Eigen::Array4f{
 				srgb_to_linear((float)val[0] * (1.0f/255.0f)) * alpha, // R: [0 - 255] -> [0, 1] * alpha
 				srgb_to_linear((float)val[1] * (1.0f/255.0f)) * alpha, // G: [0 - 255] -> [0, 1] * alpha
 				srgb_to_linear((float)val[2] * (1.0f/255.0f)) * alpha, // B: [0 - 255] -> [0, 1] * alpha
-				alpha, // [0, 1]
+				alpha, // 0 or 1
 			};
 		}
 		case EImageDataType::Half: {
@@ -670,13 +709,14 @@ inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen:
 }
 
 /**
- * @brief 
+ * @brief Read pixel data from an image buffer and convert it into a 4-component floating-point RGBA (Red, Green, Blue, Alpha) color representation.
+ * @param pos The pixel position in floats.
+ * @param resolution The resolution of the image
+ * @param pixels All the pixel data of the image
+ * @param image_data_type The data type of the image, defined with enum class EImageDataType. For non exr images, the data type is EImageDataType::Byte. For exr images, the data typ eis  EImageDataType::Half.
+ * @param img The image index, default = 0.
  * 
- * @param
- * @param
- * 
- * 
- * 
+ * @return If this pixel is background / transparent, i.e. alpha = 0, return {0, 0, 0, 0}; if If this pixel is foreground / opaque, i.e. alpha = 1, return {R, G, B, 1}, where R, G, B are between [0, 1]
 */
 inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2f pos, const Eigen::Vector2i& resolution, const void* pixels, EImageDataType image_data_type, uint32_t img = 0) {
 	return read_rgba(image_pos(pos, resolution), resolution, pixels, image_data_type, img);

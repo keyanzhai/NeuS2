@@ -126,7 +126,7 @@ struct NerfCoordinate {
 	}
 
 	NerfPosition pos; /**< The 3d position of the sampled point. */
-	float dt; /**< The dt for this sampled point on the ray. */
+	float dt; /**< The t value for this sampled point on the ray. */
 	NerfDirection dir; /**< The direction of this sampled point's ray. */
 };
 

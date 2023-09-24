@@ -62,6 +62,18 @@ NGP_NAMESPACE_BEGIN
 // - white_2_transparent: whether to convert white pixels to transparent 
 // - black_2_transparent: whether to convert black pixels to transparent
 // - mask_color: A color value that should be treated as a mask
+
+/**
+ * @brief 
+ * 
+ * @param num_pixels Number of pixels in one image. This is also the number of threads in total. 
+ * @param pixels This is a pointer to the input pixel data. It is expected to be an array of RGBA values where each pixel occupies 4 bytes (32 bits). The data is provided as an array of uint8_t, which represents the color channels (red, green, blue, alpha) for each pixel.
+ * @param out This is a pointer to the output buffer where the modified pixel data will be stored. Like the pixels parameter, it is also expected to be an array of RGBA values, and each pixel occupies 4 bytes.
+ * @param white_2_transparent 
+ * @param black_2_transparent
+ * @param mask_color
+ * 
+*/
 __global__ void convert_rgba32(const uint64_t num_pixels, const uint8_t* __restrict__ pixels, 
 							   uint8_t* __restrict__ out, bool white_2_transparent = false, 
 							   bool black_2_transparent = false, uint32_t mask_color = 0) {
@@ -656,6 +668,8 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 					dst.pixels = img; // the image data
 					dst.image_type = EImageDataType::Byte;
 				}
+
+				// printf("Image type = %d\n", dst.image_type); 
 				// ==================== End loading image data =====================
 
 				// If no image data is loaded
@@ -830,13 +844,16 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	}
 
 	result.sharpness_resolution = { 128, 72 };
+
+									// 128 * 72 * num_images
 	result.sharpness_data.enlarge( result.sharpness_resolution.x() * result.sharpness_resolution.y() *  result.n_images );
 
 	// copy / convert images to the GPU
 	for (uint32_t i = 0; i < result.n_images; ++i) {
+		// i is the id of each image
 		const LoadedImageInfo& m = images[i];
 		
-		// Set a training image
+		// Set the i-th training image
 		result.set_training_image(i, m.res, m.pixels, m.depth_pixels, m.depth_scale * result.scale, 
 								  m.image_data_on_gpu, m.image_type, EDepthDataType::UShort, sharpen_amount, 
 								  m.white_transparent, m.black_transparent, m.mask_color, m.rays);
@@ -892,7 +909,7 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 	void* dst = pixelmemory[frame_idx].data();
 
 	// image_type = EImageDataType::Byte is used
-	// convert_rgba32() is called (apply modifications on the pixels, in NeuS2 actually nothing is actually modified)
+	// convert_rgba32() is called (apply modifications on the pixels, in NeuS2 actually nothing is actually modified, just copying "pixels" to "dst")
 	switch (image_type) {
 		default: throw std::runtime_error{"unknown image type in set_training_image"};
 		case EImageDataType::Byte: 
@@ -929,8 +946,10 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 		depthmemory[frame_idx].free_memory();
 	}
 
-	// apply requested sharpening (not used)
+	// apply requested sharpening (this will not be executed)
+	// sharpen_amout = 0 by default
 	if (sharpen_amount > 0.f) {
+		printf("sharpen_amout > 0.f, sharpen_amount = %f\n", sharpen_amount);
 		if (image_type == EImageDataType::Byte) {
 			tcnn::GPUMemory<uint8_t> images_data_half(img_size * sizeof(__half));
 			linear_kernel(from_rgba32<__half>, 0, nullptr, n_pixels, (uint8_t*)pixels, (__half*)images_data_half.data(), white_transparent, black_transparent, mask_color);
@@ -954,8 +973,10 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 		dst = pixelmemory[frame_idx].data();
 	}
 
-	// sharpness_data
+	// sharpness_data (this will be executed)
+	// sharpness_data.size() = 128 * 72 * num_images
 	if (sharpness_data.size()>0) {
+		// printf("sharpness_data.size() > 0, sharpness_data.size() = %d\n", sharpness_data.size());
 		// compute overall sharpness
 		const dim3 threads = { 16, 8, 1 };
 		const dim3 blocks = { div_round_up((uint32_t)sharpness_resolution.x(), threads.x), div_round_up((uint32_t)sharpness_resolution.y(), threads.y), 1 };

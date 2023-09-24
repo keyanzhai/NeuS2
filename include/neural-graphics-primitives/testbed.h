@@ -290,7 +290,7 @@ public:
 	void reset_network();
 	void reset_network_incremental();
 	bool training_network_next_frame();
-	// void change_to_frame(uint32_t frame_idx);
+	void change_to_frame(uint32_t frame_idx);
 	void prepare_for_test();
 	void create_empty_nerf_dataset(size_t n_images, int aabb_scale = 1, bool is_hdr = false);
 	void load_nerf();

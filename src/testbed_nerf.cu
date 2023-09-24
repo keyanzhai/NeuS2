@@ -1229,13 +1229,13 @@ inline __device__ float pdf_2d(Vector2f sample, uint32_t img, const Vector2i& re
  * @brief Generates a random 2D position (xy) within the image space, considering various parameters such as resolution, pixel centers, and cumulative distribution functions (CDFs).
  * 
  * @param rng Random Number Generator
- * @param resolution
- * @param snap_to_pixel_centers
- * @param cdf_x_cond_y
- * @param cdf_y
- * @param cdf_res
- * @param img
- * @param pdf
+ * @param resolution Image resolution
+ * @param snap_to_pixel_centers Whether to snap to the center of the pixel
+ * @param cdf_x_cond_y Cumulative Density Function of x conditioned on y
+ * @param cdf_y Cumulative Density Function of y
+ * @param cdf_res Cumulative Density Function of resolution
+ * @param img Image index
+ * @param pdf Probability Density Function, by default is nullptr
  * 
 */
 inline __device__ Vector2f nerf_random_image_pos_training(default_rng_t& rng, const Vector2i& resolution, bool snap_to_pixel_centers, 
@@ -1249,6 +1249,7 @@ inline __device__ Vector2f nerf_random_image_pos_training(default_rng_t& rng, co
 		*pdf = 1.0f;
 	}
 
+	// Snap to the pixel center position from the pixel index position
 	if (snap_to_pixel_centers) {
 		xy = (xy.cwiseProduct(resolution.cast<float>()).cast<int>().cwiseMax(0).cwiseMin(resolution - Vector2i::Ones()).cast<float>() + Vector2f::Constant(0.5f)).cwiseQuotient(resolution.cast<float>());
 	}
@@ -1292,7 +1293,7 @@ inline __device__ uint32_t image_idx(uint32_t base_idx, uint32_t n_rays, uint32_
 }
 
 /**
- * @brief CUDA kernel to generate training sample points for NeRF with global movement.
+ * @brief CUDA kernel to generate training sample points for NeRF with global movement. All the coordinates of the generated training samples will be stored in "coords_out".
  * 
  * Will be executed on the GPU.
  * 
@@ -1373,7 +1374,7 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 
 	// Image Index Calculation
 	// This line calculates the index of the training image (img) associated with the current ray based on its thread index and other parameters.
-	uint32_t img = image_idx(i, n_rays, n_rays_total, n_training_images, cdf_img);
+	uint32_t img = image_idx(i, n_rays, n_rays_total, n_training_images, cdf_img); // image index
 	Eigen::Vector2i resolution = metadata[img].resolution; // resolution of the current image
 
 	// Random Position Generation
@@ -1382,19 +1383,39 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	// such as resolution, pixel centers, and cumulative distribution functions (CDFs).
 	rng.advance(i * N_MAX_RANDOM_SAMPLES_PER_RAY()); // N_MAX_RANDOM_SAMPLES_PER_RAY returns 8
 	Vector2f xy = nerf_random_image_pos_training(rng, resolution, snap_to_pixel_centers, cdf_x_cond_y, cdf_y, cdf_res, img);
-
+	
+	/** Input image should be in RGBA 4-channel format.
+	 *  R, G, B are just regular color channels, values range [0, 255]
+	 * 	A is the alpha channel, only takes 2 values:
+	 * 		0: background / transparent / black
+	 * 		255: foreground / object / white
+	*/
+	
 	// Masked-Away Regions Check:
 	// Negative values indicate masked-away regions
 
 	// It calculates the pixel index (pix_idx) from the generated position.
 	size_t pix_idx = pixel_idx(xy, resolution, 0);
+
 	// Then, it checks if the pixel value at xy in the image is zero or less 
 	// (indicating a masked-away region) and performs a random rejection test. 
 	// If both conditions are met, the thread returns without further processing.
-	if (read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type).x() <= 0.0f &&  
-		random_val(rng) >= 0.9) { // Random rejection test (why?)
+	
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! This is not making any sense. !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	// Skip the current ray / pixel (at position "xy") if both conditions are met:
+	// 	1. current pixel is in background / transparent / black / masked away (i.e. if alpha = 0)
+	// 		if pixel at "xy" is transparent, read_rgba() returns {0, 0, 0, 0}
+	//      if pixel at "xy" is not transparent, read_rgba() returns {R, G, B, 1}, where R/G/B is between [0, 1) in linear color space,
+	//  2. random generated float betwee [0, 1) is >= 0.9
+	if (read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type).x() <= 0.0f // if pixel is transparent, 
+		&& random_val(rng) >= 0.9) { // Random rejection test
+		// && true) { // Always true, meaning all transparent pixels will return / be skipped. Expectation: works the same as original. However, this doesn't work. 
+		// && false) { // Always false, meaning all transparent pixels will not return / be skipped. Expectation: works the same as using un-segmented images. However, this works same as original.
 		return;
 	}	
+
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! This is not making any sense. !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 	// Max level (?)
 	float max_level = max_level_rand_training ? (random_val(rng) * 2.0f) : 1.0f; // Multiply by 2 to ensure 50% of training is at max level
@@ -1496,11 +1517,10 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	Vector3f idir = dir.cwiseInverse();
 
 	// There are two passes for generating all the sample points for the current ray / pixel.
-	// First pass to compute an accurate number of steps "numsteps"
+	// 1. First pass to compute an accurate number of steps "numsteps"
 	uint32_t j = 0;
 	float t = startt;
 	Vector3f pos;
-
 	// While the position is in the axis-aligned bounding box, and the number of sampled points < 1024, 
 	// perform sampling.
 	while (aabb.contains(pos = ray_o + t * dir) && j < NERF_STEPS()) { // 1024
@@ -1532,8 +1552,7 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	numsteps_out[ray_idx*2+0] = numsteps;
 	numsteps_out[ray_idx*2+1] = base;
 
-
-	// Second pass
+	// 2. Second pass to actually do the sampling of the points
 	Vector3f warped_dir = warp_direction(dir);
 	t = startt;
 	j = 0;
@@ -1798,7 +1817,8 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	Array4f texsamp = read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type); // RGBA
 
 	Array3f rgbtarget;
-	if (train_in_linear_colors || color_space == EColorSpace::Linear) {
+	// By default, train_in_linear_colors = false, color_space = Linear
+	if (train_in_linear_colors || color_space == EColorSpace::Linear) { // This will be executed
 		rgbtarget = exposure_scale * texsamp.head<3>() + (1.0f - texsamp.w()) * background_color; // get rgb target
 		if (!train_in_linear_colors) {
 			rgbtarget = linear_to_srgb(rgbtarget);
@@ -1845,7 +1865,9 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	float target_depth = rays_in_unnormalized[i].d.norm() * ((depth_supervision_lambda > 0.0f && metadata[img].depth) ? read_depth(xy, resolution, metadata[img].depth) : -1.0f);
 	float depth_loss_gradient = target_depth > 0.0f ? (depth_ray - target_depth) * 2.f * depth_supervision_lambda : 0.0f;
 
+	// If pixel at xy is not transparent, texsamp.w() = 1, mask_gt = true
 	float mask_gt =(float) (texsamp.w() > 0.9999); // 1 should be with color
+	// float mask_gt = 0.0f; // if pixel at xy is opaque, mask_gt is true
 	float gradient_weight_sum;
 
 	// with softmax?
@@ -4018,7 +4040,7 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 		ray_indices,
 		rays_unnormalized,
 		numsteps,
-		PitchedPtr<NerfCoordinate>((NerfCoordinate*)coords, 1, 0, extra_stride),
+		PitchedPtr<NerfCoordinate>((NerfCoordinate*)coords, 1, 0, extra_stride), // Stores all the coordinates of the generated training samples
 		m_nerf.training.n_images_for_training,
 		m_nerf.training.metadata_gpu.data(),
 		m_nerf.training.transforms_gpu.data(),
@@ -4054,6 +4076,9 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 	if (hg_enc) {
 		hg_enc->set_max_level_gpu(m_max_level_rand_training ? max_level_compacted : nullptr);
 	}
+
+	// printf("m_color_space = %d\n", m_color_space); // Color space is always linear
+	// printf("m_nerf.training.linear_colors = %d\n", m_nerf.training.linear_colors); // By default, false; can change to true in GUI
 
 	// Compute the loss 
 	linear_kernel(compute_loss_kernel_train_nerf_with_global_movement, 0, stream,
