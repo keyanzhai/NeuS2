@@ -1,5 +1,5 @@
 /** @file   testbed_nerf.cu
- *  @author Keyan Zhai <keyanzhai3@gmail.com>
+ *  
  */
 
 #include <neural-graphics-primitives/adam_optimizer.h>
@@ -23,6 +23,7 @@
 #include <filesystem/directory.h>
 #include <filesystem/path.h>
 
+#include <iostream> // For debugging
 
 #ifdef copysign
 #undef copysign
@@ -1293,9 +1294,42 @@ inline __device__ uint32_t image_idx(uint32_t base_idx, uint32_t n_rays, uint32_
 }
 
 /**
- * @brief CUDA kernel to generate training sample points for NeRF with global movement. All the coordinates of the generated training samples will be stored in "coords_out".
+ * @brief CUDA kernel to generate training sample points for a ray in one batch with global movement.
  * 
- * Will be executed on the GPU.
+ * CUDA kernel function. Each thread that executes this kernel generates a set of sample points along a ray in one batch.
+ * 
+ * -------------------------------------------------------------------
+ *
+ * If the pixel that the current ray passes through is
+ * 	1. transparent
+ * 		or
+ * 	2. opaque but has Red channel value == 0.0f,
+ * 
+ * then there is a 10% chance that no sample points will be generated for the current ray,
+ * but 90% of the time, sample points will still be generated. 
+ * 
+ * If the pixel that the current ray passes through is
+ * 	1. opaque
+ * 		and
+ *  2. has Red channel value > 0.0f,
+ * 
+ * then sample points will be generated for the current ray.
+ * 
+ * -------------------------------------------------------------------
+ * 
+ * If sample points for the current ray are to be generated, two passes will be performed to generate these sample points.
+ * 
+ * 1. The first pass will compute an accurate number of sampled points `numsteps` for the current ray.
+ * 	  Both `numsteps` (the number of sampled points along the current ray) and `base` (the total number of sampled points in the batch so far) 
+ * 	   will be stored in `numsteps_out`.
+ * 
+ * 2. The second pass will do the actual sampling of the sample points along the current ray based on the calculated `num_steps`.
+ * 	  The coordinates of all the sampled points will be stored in `coords_out`.
+ * 
+ * -------------------------------------------------------------------
+ * 
+ * Arguments:
+ * ... 33 arguments in total ...
  * 
  * @param n_rays Number of rays per batch from counters_rgb
  * @param aabb A bounding box representing the spatial region to consider during ray tracing. It defines the volume within which rays will be traced.
@@ -1303,13 +1337,13 @@ inline __device__ uint32_t image_idx(uint32_t base_idx, uint32_t n_rays, uint32_
  * @param n_rays_total The total number of rays of the current frame so far.
  * @param rng A random number generator object. It is used to introduce randomness into the training sample generation process.
  * @param ray_counter An array that keeps track of the number of rays processed by each thread.
- * @param numsteps_counter An array that keeps track of the number of integration steps performed for each ray.
+ * @param numsteps_counter An array that keeps track of the number of total sampled points (steps) performed for each ray.
  * @param ray_indices_out An output array where the kernel stores ray indices.
  * @param rays_out_unnormalized An output array where the kernel stores ray data (e.g., origin and direction) in an unnormalized form.
- * @param numsteps_out An output array where the kernel stores the number of integration steps taken for each ray.
+ * @param numsteps_out An output array where the kernel stores the number of sampled points (steps) for each ray.
  * @param coords_out An output array where the kernel stores the coordinates of the generated training samples. The type suggests that it might be a complex data structure for managing memory.
  * @param n_training_images The number of training images being used. This parameter helps determine image indices.
- * @param metadata Metadata for the training images, including resolution, focal length, distortion, etc.
+ * @param metadata Metadata for the training images, including pixels, resolution, focal length, distortion, etc.
  * @param training_xforms Transformation information for each training image.
  * @param density_grid A grid or volume representation that likely stores information about scene density.
  * @param max_level_rand_training A boolean flag indicating whether to use randomization for the maximum training level.
@@ -1341,13 +1375,13 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	uint32_t* __restrict__ numsteps_counter,
 	uint32_t* __restrict__ ray_indices_out,
 	Ray* __restrict__ rays_out_unnormalized,
-	uint32_t* __restrict__ numsteps_out,
+	uint32_t* __restrict__ numsteps_out, // An output array where the kernel stores the number of sampled points (steps) for each ray.
 	PitchedPtr<NerfCoordinate> coords_out, // All the sampled points' coordinates will be stored in this pointer / array. 
 	const uint32_t n_training_images,
 	const TrainingImageMetadata* __restrict__ metadata,
 	const TrainingXForm* training_xforms,
 	const uint8_t* __restrict__ density_grid,
-	bool max_level_rand_training,
+	bool max_level_rand_training, // By default, false
 	float* __restrict__ max_level_ptr,
 	bool snap_to_pixel_centers,
 	bool train_envmap,
@@ -1394,30 +1428,24 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	// Masked-Away Regions Check:
 	// Negative values indicate masked-away regions
 
-	// It calculates the pixel index (pix_idx) from the generated position.
+	// Calculates the pixel index (pix_idx) from the generated position.
 	size_t pix_idx = pixel_idx(xy, resolution, 0);
-
-	// Then, it checks if the pixel value at xy in the image is zero or less 
-	// (indicating a masked-away region) and performs a random rejection test. 
-	// If both conditions are met, the thread returns without further processing.
 	
-	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! This is not making any sense. !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 	// Skip the current ray / pixel (at position "xy") if both conditions are met:
 	// 	1. current pixel is in background / transparent / black / masked away (i.e. if alpha = 0)
 	// 		if pixel at "xy" is transparent, read_rgba() returns {0, 0, 0, 0}
 	//      if pixel at "xy" is not transparent, read_rgba() returns {R, G, B, 1}, where R/G/B is between [0, 1) in linear color space,
 	//  2. random generated float betwee [0, 1) is >= 0.9
-	if (read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type).x() <= 0.0f // if pixel is transparent, 
+	if (read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type).x() <= 0.0f // if pixel R value is 0 (either transparent or black)
 		&& random_val(rng) >= 0.9) { // Random rejection test
 		// && true) { // Always true, meaning all transparent pixels will return / be skipped. Expectation: works the same as original. However, this doesn't work. 
 		// && false) { // Always false, meaning all transparent pixels will not return / be skipped. Expectation: works the same as using un-segmented images. However, this works same as original.
 		return;
 	}	
 
-	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! This is not making any sense. !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
 	// Max level (?)
+	// By default, max_level_rand_training = false
+	// 			   max_level = 1.0f
 	float max_level = max_level_rand_training ? (random_val(rng) * 2.0f) : 1.0f; // Multiply by 2 to ensure 50% of training is at max level
 
 	// Compute various camera-related properties, ray properties, and transformaitons
@@ -1435,7 +1463,7 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	// Transformation of the camera
 	const Matrix<float, 3, 4> xform = get_xform_given_rolling_shutter(training_xforms[img], metadata[img].rolling_shutter, xy, motionblur_time);
 
-	// Get the ray corresponding to the current pixel
+	// Getting the ray corresponding to the current pixel
 	Ray ray_unnormalized;
 	const Ray* rays_in_unnormalized = metadata[img].rays;
 	if (rays_in_unnormalized) { // always false;
@@ -1516,14 +1544,24 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 	startt += calc_dt(startt, cone_angle) * random_val(rng);
 	Vector3f idir = dir.cwiseInverse();
 
-	// There are two passes for generating all the sample points for the current ray / pixel.
-	// 1. First pass to compute an accurate number of steps "numsteps"
-	uint32_t j = 0;
+	// =================================== Generating sample points for current ray ================================
+	/**
+	 *  There are two passes for generating all the sample points for the current ray / pixel.
+	 *  1. The first pass is to comppute an accurate number of sampled points "numsteps" for the current ray.
+	 * 	   Given the ray and the bounding box, check if each sampled point along the ray is in the bounding box.
+	 * 
+	 *  2. Actually do the sampling of the points along the ray based on the `numsteps` calculated by the first pass.
+	 * 
+	*/
+
+	// ===================================== First Pass =====================================
+	// 1. First pass to compute an accurate number of steps `numsteps`
+	uint32_t j = 0; // index of the sampled point, j < 1024
 	float t = startt;
 	Vector3f pos;
 	// While the position is in the axis-aligned bounding box, and the number of sampled points < 1024, 
 	// perform sampling.
-	while (aabb.contains(pos = ray_o + t * dir) && j < NERF_STEPS()) { // 1024
+	while (aabb.contains(pos = ray_o + t * dir) && j < NERF_STEPS()) { // NERF_STEPS() = 1024
 		float dt = calc_dt(t, cone_angle);
 		uint32_t mip = mip_from_dt(dt, pos); // Mipmap
 		if (density_grid_occupied_at(pos, density_grid, mip)) {
@@ -1534,25 +1572,40 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 			t = advance_to_next_voxel(t, cone_angle, pos, dir, idir, res);
 		}
 	}
+
+	// If there are 0 sampled points for the current ray, return immediately
 	if (j == 0 && !train_envmap) {
 		return;
 	}
+
+	// `numsteps`: number of steps = number of sampled points along the current ray.
 	uint32_t numsteps = j;
+
+	// `base`: total number of sampled points (steps) so far for the current ray in the batch
+	//         add each ray's `numsteps` to it.
 	uint32_t base = atomicAdd(numsteps_counter, numsteps);	 // first entry in the array is a counter
-	if (base + numsteps > max_samples) {
+	if (base + numsteps > max_samples) { // if total number of sampled points of the current ray exceeds maximum, return
 		return;
 	}
 
+	// Shift `coords_out` to the starting point of the coordinates memory
 	coords_out += base;
 
+	// Get the current ray's index
+	// `ray_counter` is the number of processed rays in the current batch so far, add current one to it
 	uint32_t ray_idx = atomicAdd(ray_counter, 1);
 
-	ray_indices_out[ray_idx] = i;
-	rays_out_unnormalized[ray_idx] = ray_unnormalized; // 
-	numsteps_out[ray_idx*2+0] = numsteps;
-	numsteps_out[ray_idx*2+1] = base;
+	ray_indices_out[ray_idx] = i; // store ray index
+	rays_out_unnormalized[ray_idx] = ray_unnormalized; // store ray 
 
-	// 2. Second pass to actually do the sampling of the points
+	// For the current ray in the batch, store its `numsteps and `base`
+	// Since two things are stored for each ray, we need to use `ray_idx*2`.
+	numsteps_out[ray_idx*2+0] = numsteps; // store the number of sampled points for the current ray with index `ray_idx`
+	numsteps_out[ray_idx*2+1] = base; // store the total number of sampled points so far for the current ray with index `ray_idx`
+	// ===================================== End of First Pass =====================================
+
+	// ===================================== Second Pass =====================================
+	// 2. Second pass to actually do the sampling of the points based on the calculated `num_steps`
 	Vector3f warped_dir = warp_direction(dir);
 	t = startt;
 	j = 0;
@@ -1577,12 +1630,14 @@ __global__ void generate_training_samples_nerf_with_global_movement(
 		}
 	}
 
-	if (max_level_rand_training) {
+	if (max_level_rand_training) { // By default, false
 		max_level_ptr += base;
 		for (j = 0; j < numsteps; ++j) {
 			max_level_ptr[j] = max_level;
 		}
 	}
+	// ===================================== End of Second Pass =====================================
+	// =================================== End of Generating sample points for current ray ================================
 }
 
 /**
@@ -1590,7 +1645,7 @@ __global__ void generate_training_samples_nerf_with_global_movement(
  * 
  * @param target The target / reference / gt color value. 
  * @param prediction The predicted / rendered color value.
- * @param loss_type The type of the loss fucntion.
+ * @param loss_type The type of the loss fucntion. By defualt, ELossType::Huber
  * 
  * @return Returns the loss / gradient between the target and the prediction color.
  * 		   Format: {
@@ -1609,7 +1664,7 @@ __device__ LossAndGradient loss_and_gradient(const Vector3f& target, const Vecto
 		// off dB numbers of ~converged models and treating them as approximate PSNR to compare
 		// with other NeRF methods. Self-normalizing optimizers such as Adam are agnostic to such
 		// constant factors; optimization is therefore unaffected.
-		case ELossType::Huber:       return huber_loss(target, prediction, 0.1f) / 5.0f; break;
+		case ELossType::Huber:       return huber_loss(target, prediction, 0.1f) / 5.0f; break; // By default, this will be executed
 		case ELossType::LogL1:       return log_l1_loss(target, prediction); break;
 		default: case ELossType::L2: return l2_loss(target, prediction); break;
 	}
@@ -1620,10 +1675,24 @@ __device__ LossAndGradient loss_and_gradient(const Vector3f& target, const Vecto
  * The kernel operates on a batch of rays, where each ray corresponds to a pixel in the image. 
  * The number of rays is specified by n_rays. Each kernel thread only calculates for one ray. 
  * 
- * @param n_rays
- * @param aabb
  * ... 58 arguments in total  ...
+ * @param n_rays Number of rays in a batch, by default 2^12.
+ * @param aabb
  * 
+ * 
+ * 
+ * 
+ * @param coords_in
+ * @param coords_out
+ * 
+ * @param loss_type By default: ELossType::Huber
+ * @param loss_output Color Loss: m_nerf.training.counters_rgb.loss.data()
+ * @param ek_loss_output Eikonal Loss: m_nerf.training.counters_rgb.ek_loss.data()
+ * @param mask_loss_output Mask Loss: m_nerf.training.counters_rgb.mask_loss.data()
+ * 
+ * 
+ * @param mask_loss_weight
+ * @param ek_loss_weight
 */
 __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	const uint32_t n_rays,
@@ -1638,21 +1707,21 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	float* __restrict__ envmap_gradient,
 	const Vector2i envmap_resolution,
 	ELossType envmap_loss_type,
-	Array3f background_color,
-	EColorSpace color_space,
-	bool train_with_random_bg_color,
-	bool train_in_linear_colors,
+	Array3f background_color, // By default {0, 0, 0}, not used
+	EColorSpace color_space, // By default, color space is always linear
+	bool train_with_random_bg_color, // By default, always true
+	bool train_in_linear_colors, // By default, false; can change to true in GUI
 	const uint32_t n_training_images,
 	const TrainingImageMetadata* __restrict__ metadata,
 	const tcnn::network_precision_t* network_output,
 	uint32_t* __restrict__ numsteps_counter,
 	const uint32_t* __restrict__ ray_indices_in,
 	const Ray* __restrict__ rays_in_unnormalized,
-	uint32_t* __restrict__ numsteps_in,
-	PitchedPtr<const NerfCoordinate> coords_in,
-	PitchedPtr<NerfCoordinate> coords_out,
-	tcnn::network_precision_t* dloss_doutput,
-	ELossType loss_type,
+	uint32_t* __restrict__ numsteps_in, // Number of steps for each ray in the batch
+	PitchedPtr<const NerfCoordinate> coords_in, // 
+	PitchedPtr<NerfCoordinate> coords_out, // coords
+	tcnn::network_precision_t* dloss_doutput, // coords_compacted
+	ELossType loss_type, // By default: ELossType::Huber
 	float* __restrict__ loss_output, // color Loss output
 	float* __restrict__ ek_loss_output, // eikonal loss output
 	float* __restrict__ mask_loss_output, // mask loss output
@@ -1801,8 +1870,9 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	Vector2f xy = nerf_random_image_pos_training(rng, resolution, snap_to_pixel_centers, cdf_x_cond_y, cdf_y, error_map_cdf_res, img, &xy_pdf);
 	float max_level = max_level_rand_training ? (random_val(rng) * 2.0f) : 1.0f; // Multiply by 2 to ensure 50% of training is at max level
 
-	if (train_with_random_bg_color) {
-		background_color = random_val_3d(rng);
+	// For each ray / pixel in the batch, generate a random background color
+	if (train_with_random_bg_color) { // By default, true
+		background_color = random_val_3d(rng); // {R, G, B} randomly generated between [0, 1)
 	}
 	Array3f pre_envmap_background_color = background_color = srgb_to_linear(background_color);
 
@@ -1814,24 +1884,37 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	}
 
 	Array3f exposure_scale = (0.6931471805599453f * exposure[img]).exp();
+
+	// Read the RGBA values of the pixel at `xy`
+	// If the pixel is transparent, `texsamp` = {0, 0, 0, 0}.
+	// If the pixel is opaque, `textsamp` = {R, G, B, 1}, where R, G, B is between [0, 1].
 	Array4f texsamp = read_rgba(xy, resolution, metadata[img].pixels, metadata[img].image_data_type); // RGBA
 
+	// Get the ground truth RGB color of the current ray / pixel in the batch `rgbtarget`
 	Array3f rgbtarget;
 	// By default, train_in_linear_colors = false, color_space = Linear
 	if (train_in_linear_colors || color_space == EColorSpace::Linear) { // This will be executed
-		rgbtarget = exposure_scale * texsamp.head<3>() + (1.0f - texsamp.w()) * background_color; // get rgb target
-		if (!train_in_linear_colors) {
+		// Ground truth RGB of the pixel:
+		// Original RGB values of the pixel scaled by an exposure scalar.
+		//    If transparent, {0, 0, 0}. Then add the background color (by default, randomly generated).
+		//    If opaque, original {R, G, B} mapped to [0, 1].
+    
+		rgbtarget = exposure_scale * texsamp.head<3>() + (1.0f - texsamp.w()) * background_color; // get rgb target 
+		// rgbtarget = texsamp.head<3>();
+
+		if (!train_in_linear_colors) { // This will be executed
 			rgbtarget = linear_to_srgb(rgbtarget);
 			background_color = linear_to_srgb(background_color);
 		}
-	} else if (color_space == EColorSpace::SRGB) {
-		background_color = linear_to_srgb(background_color);
-		if (texsamp.w() > 0) {
-			rgbtarget = linear_to_srgb(exposure_scale * texsamp.head<3>() / texsamp.w()) * texsamp.w() + (1.0f - texsamp.w()) * background_color;
-		} else {
-			rgbtarget = background_color;
-		}
 	}
+	// } else if (color_space == EColorSpace::SRGB) {
+	// 	background_color = linear_to_srgb(background_color);
+	// 	if (texsamp.w() > 0) {
+	// 		rgbtarget = linear_to_srgb(exposure_scale * texsamp.head<3>() / texsamp.w()) * texsamp.w() + (1.0f - texsamp.w()) * background_color;
+	// 	} else {
+	// 		rgbtarget = background_color;
+	// 	}
+	// }
 
 	if (compacted_numsteps == numsteps) {
 		// support arbitrary background colors
@@ -1856,6 +1939,7 @@ __global__ void compute_loss_kernel_train_nerf_with_global_movement(
 	dloss_doutput += compacted_base * padded_output_width;
 
 	// Compute loss and gradient between the target RGB and the predicted / rendered RGB of the current pixel with the given loss type
+	// L_color
 	// l: loss, g: gradient
 	// rgbtarget: reference / ground truth pixel color
 	// rgb_ray: predicted / rendered pixel color
@@ -3806,7 +3890,7 @@ void Testbed::train_nerf(uint32_t target_batch_size, bool get_loss_scalar, cudaS
 	// Get extrinsics gradients
 	m_nerf.training.n_steps_since_cam_update += 1;
 
-	// If training extram dimensions
+	// If training extra dimensions
 	if (train_extra_dims) {
 		std::vector<float> extra_dims_gradient(m_nerf.training.extra_dims_gradient_gpu.size());
 		std::vector<float> &extra_dims_new_values = extra_dims_gradient; // just create an alias to make the code clearer.
@@ -3923,11 +4007,11 @@ void Testbed::train_nerf(uint32_t target_batch_size, bool get_loss_scalar, cudaS
 }
 
 /**
- * @brief Train the NeRF model at the current step of the current frame
+ * @brief Train the NeRF model at the current batch of the current frame
  * 
  * @param target_batch_size Batch size.
  * @param n_rays_per_batch Number of rays per batch from counters_rgb
- * @param counter number of steps each ray took
+ * @param counter number of total sampled points (steps)
  * @param compacted_counter number of steps each ray took
  * @param loss loss : m_nerf.training.counters_rgb.loss.data()
  * @param ek_loss ek_loss : m_nerf.training.counters_rgb.ek_loss.data()
@@ -3941,6 +4025,16 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 	const uint32_t floats_per_coord = sizeof(NerfCoordinate) / sizeof(float) + m_nerf_network->n_extra_dims();
 	const uint32_t extra_stride = m_nerf_network->n_extra_dims() * sizeof(float); // extra stride on top of base NerfCoordinate struct
 
+	// std::cout << "============== Debugging ==============" << std::endl;
+	// std::cout << "current training step = " << m_training_step << std::endl; // current training step
+	// std::cout << "padded_output_width = " << padded_output_width << std::endl; // 16
+	// std::cout << "target_batch_size = " << target_batch_size << std::endl; // 262144
+	// std::cout << "max_samples = " << max_samples << std::endl; // 4194304 = 262144 * 16
+	// std::cout << "floats_per_coord = " << floats_per_coord << std::endl; // 7
+	// std::cout << "n_rays_per_batch = " << n_rays_per_batch << std::endl; // 4096 (from step 0) -> 768 (from step 1) -> 640 (from step 6) -> 512 (from step 17)
+	// std::cout << "============== Debugging End ==============" << std::endl;
+
+	// ========================================= Allocating GPU Memory =========================================
 	// Allocate GPU memory
 	GPUMemoryArena::Allocation alloc;
 	auto scratch = allocate_workspace_and_distribute<
@@ -3957,17 +4051,17 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 		uint32_t // ray_counter
 	>(
 		stream, &alloc,
-		n_rays_per_batch, // ray_indices
-		n_rays_per_batch, // rays
-		n_rays_per_batch * 2,  // numsteps 
-		max_samples * floats_per_coord, // coords - the coordinates of all the sampled points
-		max_samples, // max_level
-		std::max(target_batch_size, max_samples) * padded_output_width, // mlp_out - output by the mlp
-		target_batch_size * padded_output_width, // dloss_dmlp_out
-		target_batch_size * floats_per_coord, // coords_compacted
-		target_batch_size * floats_per_coord, // coords_gradient
-		target_batch_size, // max_level_compacted
-		1  // ray_counter
+		n_rays_per_batch, // ray_indices = 4096 (from step 0) -> 768 (from step 1) -> 640 (from step 6) -> 512 (from step 17)
+		n_rays_per_batch, // rays = 4096 (from step 0) -> 768 (from step 1) -> 640 (from step 6) -> 512 (from step 17)
+		n_rays_per_batch * 2,  // numsteps = 2 * (4096 (from step 0) -> 768 (from step 1) -> 640 (from step 6) -> 512 (from step 17)); reason why *2 here: we store both `numsteps` and `base`
+		max_samples * floats_per_coord, // coords - the coordinates of all the sampled points = 262144 * 16 * 7
+		max_samples, // max_level = 262144 * 16
+		std::max(target_batch_size, max_samples) * padded_output_width, // mlp_out - output by the mlp = (262144 * 16) * 16
+		target_batch_size * padded_output_width, // dloss_dmlp_out = 262144 * 16
+		target_batch_size * floats_per_coord, // coords_compacted = 262144 * 7
+		target_batch_size * floats_per_coord, // coords_gradient = 262144 * 7
+		target_batch_size, // max_level_compacted = 262144
+		1  // ray_counter = 1, total number of rays for the current batch
 	);
 	
 	// TODO: C++17 structured binding
@@ -3982,6 +4076,8 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 	float* coords_gradient = std::get<8>(scratch);
 	float* max_level_compacted = std::get<9>(scratch);
 	uint32_t* ray_counter = std::get<10>(scratch);
+	// ========================================= Allocating GPU Memory End =========================================
+
 
 	uint32_t max_inference;
 	if (m_nerf.training.counters_rgb.measured_batch_size_before_compaction == 0) {
@@ -4000,13 +4096,12 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 
 	GPUMatrix<network_precision_t> gradient_matrix(dloss_dmlp_out, padded_output_width, target_batch_size);
 
-	// If the first training step of the current frame, set "n_rays_total" to 0.
-	// "n_rays_total" is the total number of rays of the current frame so far
+	// If the first training step of the current frame, set `n_rays_total` to 0.
+	// `n_rays_total` is the total number of rays of the current frame so far (at the current batch)
 	if (m_training_step == 0 || m_canonical_training_step == 0) {
 		m_nerf.training.counters_rgb.n_rays_total = 0;
 	}
-
-	// Get total number of rays ro far of the current frame
+	// Get total number of rays so far (at the current batch)
 	uint32_t n_rays_total = m_nerf.training.counters_rgb.n_rays_total;
 
 	// Update the total number of rays
@@ -4025,27 +4120,39 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 
 	CUDA_CHECK_THROW(cudaMemsetAsync(ray_counter, 0, sizeof(uint32_t), stream));
 
-	// Run CUDA kernel "generate_training_samples_nerf_with_global_movement"
-	linear_kernel(generate_training_samples_nerf_with_global_movement, 0, stream,
-		// Below are all the args for "generate_training_samples_nerf_with_global_movement"
-		// n_elements
-		n_rays_per_batch,
-		// ... args
+	// std::cout << "============== Debugging ==============" << std::endl;
+	// std::cout << "current training step = " << m_training_step << std::endl; // current training step
+	// std::cout << "current m_canonical_training_step = " << m_canonical_training_step << std::endl; // current canonical training step
+	// std::cout << "max_inference = " << max_inference << std::endl; // varying
+	// std::cout << "n_rays_total = " << n_rays_total << std::endl; // accumulating total number of rays
+	// std::cout << "m_max_level_rand_training = " << m_max_level_rand_training << std::endl; // false
+	// std::vector<uint32_t> ray_counter_cpu(1);
+	// CUDA_CHECK_THROW(cudaMemcpyAsync(ray_counter_cpu.data(), ray_counter, sizeof(uint32_t) * 1, cudaMemcpyDeviceToHost, stream));
+	// std::cout << "ray_counter_cpu = " << ray_counter_cpu[0] << std::endl;
+	// std::cout << "============== Debugging End ==============" << std::endl;
+
+	linear_kernel(generate_training_samples_nerf_with_global_movement, 0, stream, n_rays_per_batch,
+				// kernel = generate_training_samples_nerf_with_global_movement()
+																	// shmem_size = 0
+																		// stream = stream
+																				// n_elements = n_rays_per_batch = 4096 (varying)
+		// Below are all the args for `generate_training_samples_nerf_with_global_movement()`
+		// In total, 33 arguments (including `n_elements`)
 		m_aabb,
-		max_inference,
-		n_rays_total,
+		max_inference, // Maximum number of sample points for the current batch (varying)
+		n_rays_total, // Total number of rays ro far of the current batch (varying)
 		m_rng,
 		ray_counter,
 		counter,
 		ray_indices,
 		rays_unnormalized,
-		numsteps,
+		numsteps, // An output array where the kernel stores the number of sampled points (steps) for each ray.
 		PitchedPtr<NerfCoordinate>((NerfCoordinate*)coords, 1, 0, extra_stride), // Stores all the coordinates of the generated training samples
-		m_nerf.training.n_images_for_training,
-		m_nerf.training.metadata_gpu.data(),
+		m_nerf.training.n_images_for_training, // The number of training images being used.
+		m_nerf.training.metadata_gpu.data(), // Metadata for the training images, including pixels, resolution, focal length, distortion, etc.
 		m_nerf.training.transforms_gpu.data(),
 		m_nerf.density_grid_bitfield.data(),
-		m_max_level_rand_training,
+		m_max_level_rand_training, // By default, false
 		max_level,
 		m_nerf.training.snap_to_pixel_centers,
 		m_nerf.training.train_envmap,
@@ -4077,12 +4184,40 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 		hg_enc->set_max_level_gpu(m_max_level_rand_training ? max_level_compacted : nullptr);
 	}
 
-	// printf("m_color_space = %d\n", m_color_space); // Color space is always linear
-	// printf("m_nerf.training.linear_colors = %d\n", m_nerf.training.linear_colors); // By default, false; can change to true in GUI
+	// std::cout << "============== Debugging ==============" << std::endl;
+	// std::cout << "current training step = " << m_training_step << std::endl; // current training step
+	// std::cout << "m_color_space = " << m_color_space << std::endl; // By default, color space is always linear
+	// std::cout << "m_nerf.training.linear_colors = " << m_nerf.training.linear_colors << std::endl; // By default, false; can change to true in GUI
+	// std::cout << "background color = " << m_background_color.head<3>() << std::endl;
+	// std::cout << "(1-0) * background color = " << (1.0f - 0.0f) * m_background_color.head<3>() << std::endl;
+	// std::cout << "(1-1) * background color = " << (1.0f - 1.0f) * m_background_color.head<3>() << std::endl;
+	// std::cout << "m_nerf.training.random_bg_color = " << m_nerf.training.random_bg_color << std::endl; // By default, true / 1
+	// switch (m_nerf.training.loss_type) { // By default, ELossType::Huber
+	// 	case ELossType::RelativeL2:  std::cout << "ELossType::RelativeL2" << std::endl; break;
+	// 	case ELossType::L1:          std::cout << "ELossType::L1" << std::endl; break;
+	// 	case ELossType::Mape:        std::cout << "ELossType::Mape" << std::endl; break;
+	// 	case ELossType::Smape:       std::cout << "ELossType::Smape" << std::endl; break;
+	// 	case ELossType::Huber:       std::cout << "ELossType::Huber" << std::endl; break;
+	// 	case ELossType::LogL1:       std::cout << "ELossType::LogL1" << std::endl; break;
+	// 	default: case ELossType::L2: std::cout << "ELossType::L2" << std::endl; break;
+	// }
+	// std::vector<uint32_t> numsteps_cpu(n_rays_per_batch * 2); // Number of total sampled points for each ray
+	// CUDA_CHECK_THROW(cudaMemcpyAsync(numsteps_cpu.data(), numsteps, sizeof(uint32_t) * n_rays_per_batch * 2, cudaMemcpyDeviceToHost, stream));
+	// std::cout << "Ray0: numsteps_cpu[0] = " << numsteps_cpu[0] << ", numsteps_cpu[1] = " << numsteps_cpu[1] << std::endl; // numsteps = 469， base = 0; or current ray: starting from 0, there are 469 samplfed points
+	// std::cout << "Ray1: numsteps_cpu[2] = " << numsteps_cpu[2] << ", numsteps_cpu[3] = " << numsteps_cpu[3] << std::endl; // numsteps = 391， base = 469 = 0 + 469; for current ray: starting from 469, there are 391 samplfed points
+	// std::cout << "Ray2: numsteps_cpu[4] = " << numsteps_cpu[4] << ", numsteps_cpu[5] = " << numsteps_cpu[5] << std::endl; // numsteps = 348， base = 860 = 469 + 391; for current ray: starting from 860, there are 348 samplfed points
+	// std::vector<uint32_t> ray_counter_cpu(1); // Number of rays processed for the current batch
+	// CUDA_CHECK_THROW(cudaMemcpyAsync(ray_counter_cpu.data(), ray_counter, sizeof(uint32_t) * 1, cudaMemcpyDeviceToHost, stream));
+	// std::cout << "ray_counter_cpu = " << ray_counter_cpu[0] << std::endl; // varying
+	// std::cout << "============== Debugging End ==============" << std::endl;
 
-	// Compute the loss 
-	linear_kernel(compute_loss_kernel_train_nerf_with_global_movement, 0, stream,
-		n_rays_per_batch,
+	linear_kernel(compute_loss_kernel_train_nerf_with_global_movement, 0, stream, n_rays_per_batch,
+			   // kernel = compute_loss_kernel_train_nerf_with_global_movement()
+																	// shmem_size = 0
+																		// stream = stream
+																				// n_elements = n_rays_per_batch = 2 ^ 12 (varying)
+		// Below are arguments for kernel `compute_loss_kernel_train_nerf_with_global_movement()`
+		// In total, 57 arguments (including `n_elements`)
 		m_aabb,
 		n_rays_total,
 		m_rng,
@@ -4094,21 +4229,21 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 		envmap_gradient,
 		m_envmap.resolution,
 		m_envmap.loss_type,
-		m_background_color.head<3>(),
-		m_color_space,
-		m_nerf.training.random_bg_color,
-		m_nerf.training.linear_colors,
+		m_background_color.head<3>(), // background_color, by default {0, 0, 0}, not used
+		m_color_space, // By default, color space is linear
+		m_nerf.training.random_bg_color, // By default, true
+		m_nerf.training.linear_colors, // By default, false; can change to true in GUI
 		m_nerf.training.n_images_for_training,
-		m_nerf.training.metadata_gpu.data(),
+		m_nerf.training.metadata_gpu.data(), // The metadata on gpu for training
 		mlp_out, // The output by the neural network
 		compacted_counter,
 		ray_indices,
 		rays_unnormalized,
-		numsteps,
-		PitchedPtr<const NerfCoordinate>((NerfCoordinate*)coords, 1, 0, extra_stride),
-		PitchedPtr<NerfCoordinate>((NerfCoordinate*)coords_compacted, 1 ,0, extra_stride),
+		numsteps, // Number of steps for each ray in the batch
+		PitchedPtr<const NerfCoordinate>((NerfCoordinate*)coords, 1, 0, extra_stride), // 
+		PitchedPtr<NerfCoordinate>((NerfCoordinate*)coords_compacted, 1 ,0, extra_stride), // 
 		dloss_dmlp_out,
-		m_nerf.training.loss_type,
+		m_nerf.training.loss_type, // By default: ELossType::Huber
 		loss, // Color loss output
 		ek_loss, // eikonal loss output
 		mask_loss, // mask loss output
@@ -4164,6 +4299,12 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 
 	m_nerf_network->indeed_batch_size = target_batch_size;
 
+	// std::cout << "============== Debugging ==============" << std::endl;
+	// std::cout << "current training step = " << m_training_step << std::endl; // current training step
+	// std::cout << "Total number of sampled points (counter) = " << counter_cpu[0] << std::endl;
+	// std::cout << "============== Debugging End ==============" << std::endl;
+
+	// ================================================== Training =============================================================
 	{
 	// Perform a forward pass and a backward pass of a neural network (m_network) using 
 	// input data (compacted_coords_matrix and compacted_rgbsigma_matrix).
@@ -4179,6 +4320,7 @@ void Testbed::train_nerf_step(uint32_t target_batch_size, uint32_t n_rays_per_ba
 						prepare_input_gradients ? &coords_gradient_matrix : nullptr, false, EGradientMode::Overwrite);
 
 	}
+	// ================================================ Training End =============================================================
 
 	// Train extra dimensions
 	if (train_extra_dims) {

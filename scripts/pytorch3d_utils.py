@@ -1,6 +1,6 @@
 '''
 @file   pytorch3d_utils.py
-@author Keyan Zhai <keyanzhai3@gmail.com>
+
 '''
 
 import pytorch3d

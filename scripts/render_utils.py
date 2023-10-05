@@ -350,7 +350,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     
 
     # Save diff of rendered image and ref image
-    diffimg = np.absolute(image - ref_image)
+    diffimg = np.absolute(image[:, :, :3] - ref_image[:, :, :3])
     diffimg[...,3:4] = 1.0
 
     if training_step < 0:

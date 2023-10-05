@@ -240,7 +240,7 @@ enum class EEmaType {
 	Step,
 };
 
-class Ema {
+class Ema { // Exponential Moving Average
 public:
 	Ema(EEmaType type, float half_life)
 	: m_type{type}, m_decay{std::pow(0.5f, 1.0f / half_life)}, m_creation_time{std::chrono::steady_clock::now()} {}

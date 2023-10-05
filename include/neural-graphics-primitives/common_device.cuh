@@ -668,15 +668,21 @@ inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen:
 			// and assign that data to val
 			*(uint32_t*)&val[0] = ((uint32_t*)pixels)[pixel_idx(px, resolution, img)];
 			
-			// 0x00FF00FF is a hexadecimal representation of an ARGB color value (or RGBA?)
-			// This doesn't make any sense. This is magenta color.
-			// A: 00
-			// R: FF
-            // G: 00 -> FF?
-			// B: FF
-			// if (*(uint32_t*)&val[0] == 0x00FF00FF) { // this should be 0x00FFFFFF?
+			/** 0x00FF00FF is a hexadecimal representation of an RGBA color value, which is opaque pure green color.
+			 * 	R: 00
+			 * 	G: FF
+			 * 	B: 00
+			 * 	A: FF
+			 * 
+			 * 	Logic of original code: 
+			 * 		If input pixel is opaque pure green color, return {-1, -1, -1, -1},
+			 * 		which doesn't make any sense, comment out this code block.
+			*/
+			// ======================= does not make sense ========================
+			// if (*(uint32_t*)&val[0] == 0x00FF00FF) {
 			// 	return Eigen::Array4f::Constant(-1.0f);
 			// }
+			// ======================= does not make sense ========================
 
 			// Get the alpha value of this pixel.
 			// Alpha value is either 0 (bg) or 255 (fg)
@@ -695,7 +701,7 @@ inline NGP_HOST_DEVICE Eigen::Array4f read_rgba(Eigen::Vector2i px, const Eigen:
 				srgb_to_linear((float)val[0] * (1.0f/255.0f)) * alpha, // R: [0 - 255] -> [0, 1] * alpha
 				srgb_to_linear((float)val[1] * (1.0f/255.0f)) * alpha, // G: [0 - 255] -> [0, 1] * alpha
 				srgb_to_linear((float)val[2] * (1.0f/255.0f)) * alpha, // B: [0 - 255] -> [0, 1] * alpha
-				alpha, // 0 or 1
+				alpha // 0 or 1
 			};
 		}
 		case EImageDataType::Half: {

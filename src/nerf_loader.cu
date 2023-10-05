@@ -64,14 +64,14 @@ NGP_NAMESPACE_BEGIN
 // - mask_color: A color value that should be treated as a mask
 
 /**
- * @brief 
+ * @brief CUDA kernel function to convert one pixel to RGBA format. Copy from "pixels" to "out".
  * 
  * @param num_pixels Number of pixels in one image. This is also the number of threads in total. 
  * @param pixels This is a pointer to the input pixel data. It is expected to be an array of RGBA values where each pixel occupies 4 bytes (32 bits). The data is provided as an array of uint8_t, which represents the color channels (red, green, blue, alpha) for each pixel.
  * @param out This is a pointer to the output buffer where the modified pixel data will be stored. Like the pixels parameter, it is also expected to be an array of RGBA values, and each pixel occupies 4 bytes.
- * @param white_2_transparent 
- * @param black_2_transparent
- * @param mask_color
+ * @param white_2_transparent default = false
+ * @param black_2_transparent default = false
+ * @param mask_color default = 0
  * 
 */
 __global__ void convert_rgba32(const uint64_t num_pixels, const uint8_t* __restrict__ pixels, 
@@ -88,23 +88,15 @@ __global__ void convert_rgba32(const uint64_t num_pixels, const uint8_t* __restr
 	*((uint32_t*)&rgba[0]) = *((uint32_t*)&pixels[i*4]);
 
 	// NSVF dataset has 'white = transparent' madness
-	// white_2_transparent should be false (not used)
-	// whether to convert white pixels to transparent 
 	if (white_2_transparent && rgba[0] == 255 && rgba[1] == 255 && rgba[2] == 255) {
-		printf("white_2_transparent is true, setting rgba[3] = 0 \n");
 		rgba[3] = 0;
 	}
-
-	// black_2_transparent should be false (not used)
-	// whether to convert black pixels to transparent
+	
 	if (black_2_transparent && rgba[0] == 0 && rgba[1] == 0 && rgba[2] == 0) {
-		printf("black_2_transparent is true, setting rgba[3] = 0 \n");
 		rgba[3] = 0;
 	}
 
-	// mask_color should always be 0 (not used)
 	if (mask_color != 0 && mask_color == *((uint32_t*)&rgba[0])) {
-		printf("mask_color != 0");
 		// turn the mask into hot pink
 		rgba[0] = 0xFF; rgba[1] = 0x00; rgba[2] = 0xFF; rgba[3] = 0x00;
 	}
@@ -278,9 +270,10 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 		}
 	);
 
-	// For dynamic scene: one json for all frame, all images in one frame
+	// Get the total number of images in all the json files (all the frames in a dynamic scene)
 	result.n_images = 0;
 	for (size_t i = 0; i < jsons.size(); ++i) {
+		// for each json file, get the number of views for that json file (1 frame)
 		auto& json = jsons[i];
 		fs::path basepath = jsonpaths[i].parent_path();
 		if (!json.contains("frames") || !json["frames"].is_array()) {
@@ -288,7 +281,7 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			continue;
 		}
 		tlog::info() << "  " << jsonpaths[i];
-		auto& frames = json["frames"];
+		auto& frames = json["frames"]; // the "frames" key in each json file contains all the camera views
 
 		float sharpness_discard_threshold = json.value("sharpness_discard_threshold", 0.0f); // Keep all by default
 
@@ -301,7 +294,7 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			frames.get_ptr<nlohmann::json::array_t*>()->resize(cull_idx);
 		}
 
-		if (frames[0].contains("sharpness")) {
+		if (frames[0].contains("sharpness")) { // by default, false
 			auto frames_copy = frames;
 			frames.clear();
 
@@ -326,6 +319,7 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 		}
 
 		// Set the number of images provided in the json file
+		// Total number of images plus current json file's number of views
 		result.n_images += frames.size();
 	}
 
@@ -884,9 +878,10 @@ void NerfDataset::set_training_image(int frame_idx, const Eigen::Vector2i& image
 	if (frame_idx < 0 || frame_idx >= n_images) {
 		throw std::runtime_error{"NerfDataset::set_training_image: invalid frame index"};
 	}
-	size_t n_pixels = image_resolution.prod();
-	size_t img_size = n_pixels * 4; // 4 channels
-	size_t image_type_stride = image_type_size(image_type);
+	size_t n_pixels = image_resolution.prod(); // height x width
+	size_t img_size = n_pixels * 4; // 4 channels: height x width x 4
+	size_t image_type_stride = image_type_size(image_type); // EImageDataType::Byte = 1
+
 	// copy to gpu if we need to do a conversion
 	GPUMemory<uint8_t> images_data_gpu_tmp;
 	GPUMemory<uint8_t> depth_tmp;

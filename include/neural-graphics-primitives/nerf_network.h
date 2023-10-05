@@ -1,5 +1,5 @@
 /** @file   nerf_network.h
- *  @author Keyan Zhai <keyanzhai3@gmail.com>
+ *  
  */
 
 #pragma once

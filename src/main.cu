@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
 
 		// Load network from snapshot or config file based on snapshot_flag
 		// By defualt, the config file "config/base.json" will be used.
-		if (snapshot_flag) {
+		if (snapshot_flag) { // By default, not executed
 			// Load network from a snapshot if one is provided
 			fs::path snapshot_path = get(snapshot_flag);
 			if (!snapshot_path.exists()) {
@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
 			testbed.load_snapshot(snapshot_path.str());
 			testbed.m_train = false;
 			printf("*******Loaded snapshot succeed!\n");
-		} else {
+		} else { // By default, executed
 			// Otherwise, load the network config and prepare for training
 			fs::path network_config_path = fs::path{"configs"}/mode_str;
 			if (network_config_flag) {
@@ -238,6 +238,7 @@ int main(int argc, char** argv) {
 		// ======================= Training =======================
 		// Render/training loop
 		while (testbed.frame()) {
+			tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val();
 			if (!gui) { // If not using GUI, print out loss info
 				tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val();
 				// tlog::info() << "iteration=" << testbed.m_training_step << " loss=" << testbed.m_loss_scalar.val() << " lr=" << testbed.m_optimizer.learning_rate();

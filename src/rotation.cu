@@ -1,5 +1,5 @@
 /** @file   rotation.cu
- *  @author Keyan Zhai <keyanzhai3@gmail.com>
+ *  
  */
 
 #include <tiny-cuda-nn/common.h>

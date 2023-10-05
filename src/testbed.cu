@@ -1,5 +1,5 @@
 /** @file   testbed.cu
- *  @author Keyan Zhai <keyanzhai3@gmail.com>
+ *  
  */
 
 #include <neural-graphics-primitives/common.h>
@@ -1718,7 +1718,7 @@ void Testbed::destroy_window() {
 }
 
 /**
- * @brief Train one frame.
+ * @brief Train one iteration / one batch.
  * @return Returns false if all the training is done. Otherwise, returns true
 */
 bool Testbed::frame() {
