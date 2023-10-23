@@ -152,6 +152,11 @@ json Testbed::load_network_config(const fs::path& network_config_path) {
 	return result;
 }
 
+/**
+ * 
+ * @param network_output_path By default, "output"
+ * 
+*/
 void Testbed::reload_network_from_file(const std::string& network_config_path, const std::string& network_output_path) {
 	if (!network_config_path.empty()) {
 		m_network_config_path = network_config_path;
@@ -159,7 +164,7 @@ void Testbed::reload_network_from_file(const std::string& network_config_path, c
 
 	m_network_config = load_network_config(m_network_config_path);
 	m_network_config["output_path"] = network_output_path;
-	reset_network();
+	reset_network(); // set up the network
 }
 
 
@@ -2103,6 +2108,12 @@ bool Testbed::training_network_next_frame() {
 	return true;
 }
 
+/**
+ * @brief After loading network config from "configs/nerf/base.json", reset the configurations for the network.
+ * Important function: initializing and setting up the network.
+ * 
+ * 
+*/
 void Testbed::reset_network() {
 	m_sdf.iou_decay = 0;
 
@@ -2128,8 +2139,8 @@ void Testbed::reset_network() {
 	m_loss_graph_samples = 0;
 
 	// Default config
+	// Parsed json from "configs/nerf/base.json"
 	json config = m_network_config;
-
 	json& encoding_config = config["encoding"];
 	json& loss_config = config["loss"];
 	json& optimizer_config = config["optimizer"];

@@ -33,6 +33,16 @@ NGP_NAMESPACE_BEGIN
 
 using namespace Eigen;
 
+
+/**
+ * @brief The NerfNework class.
+ * Important class: defines the SDF and the RGB network.
+ * 
+ * 
+ * 
+ * 
+ * 
+*/
 template <typename T>
 class NerfNetwork : public tcnn::Network<float, T> {
 public:

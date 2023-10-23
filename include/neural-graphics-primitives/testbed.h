@@ -608,7 +608,7 @@ public:
 				tcnn::GPUMemory<float> ek_loss; // Eikonal Loss
 				tcnn::GPUMemory<float> mask_loss; // Mask Loss
 
-				uint32_t rays_per_batch = 1<<12;
+				uint32_t rays_per_batch = 1<<12; // Number of rays in one batch
 				uint32_t n_rays_total = 0; /**< the total number of rays so far for the current frame */
 				uint32_t measured_batch_size = 0;
 				uint32_t measured_batch_size_before_compaction = 0;

@@ -204,7 +204,8 @@ int main(int argc, char** argv) {
 			printf("*******Loaded snapshot succeed!\n");
 		} else { // By default, executed
 			// Otherwise, load the network config and prepare for training
-			fs::path network_config_path = fs::path{"configs"}/mode_str;
+			fs::path network_config_path = fs::path{"configs"}/mode_str; // "configs/nerf"
+
 			if (network_config_flag) {
 				auto network_config_str = get(network_config_flag);
 				if ((network_config_path/network_config_str).exists()) {
@@ -212,8 +213,8 @@ int main(int argc, char** argv) {
 				} else {
 					network_config_path = network_config_str;
 				}
-			} else {
-				// By default, the config file used is "config/base.json"
+			} else { // By default, executed
+				// By default, the config file used is ""configs/nerf/base.json"
 				network_config_path = network_config_path/"base.json";
 			}
 
@@ -222,6 +223,7 @@ int main(int argc, char** argv) {
 				return 1;
 			}
 
+			// Reload network config from "configs/nerf/base.json"
 			testbed.reload_network_from_file(network_config_path.str());
 			testbed.m_train = !no_train_flag;
 		}

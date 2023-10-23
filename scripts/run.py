@@ -147,7 +147,7 @@ if __name__ == "__main__":
 			print(f"Generating mesh via marching cubes and saving to {args.save_mesh_path}. Resolution=[{res},{res},{res}]")
 			testbed.compute_and_save_marching_cubes_mesh(args.save_mesh_path, [res, res, res])
 			
-		render_img_training_view(args, testbed, log_ptr, args.scene)
+		# render_img_training_view(args, testbed, log_ptr, args.scene)
 
 	else:
 		print("no test")
@@ -274,7 +274,7 @@ if __name__ == "__main__":
 
 		log_path = os.path.join(args.output_path, f"eval_log.txt")
 		log_ptr = open(log_path, "w+")
-		render_img_training_view(args, testbed, log_ptr, args.scene)
+		# render_img_training_view(args, testbed, log_ptr, args.scene)
 		
 
 
